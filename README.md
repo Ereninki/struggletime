@@ -16,7 +16,7 @@ ships **one** `struggletime` / `struggletime.exe` used as both:
 
 | Mode | How |
 |---|---|
-| Desktop tray app | Start Menu / Applications / bare `struggletime` |
+| Desktop tray app | Start Menu / Applications / `struggletime --tray` |
 | CLI | `struggletime status`, `apikey`, `start`, … |
 
 Same binary, same settings, same hash-chained ledger (`prev_hash`,

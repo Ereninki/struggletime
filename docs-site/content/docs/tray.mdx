@@ -13,8 +13,9 @@ See [Installation](/docs/installation) for App + PATH setup on each OS.
 
 | How you launch | What happens |
 |---|---|
-| Double-click / Start Menu / Applications / bare `struggletime` / `--tray` | Tray icon + background tracker supervisor (no extra console on Windows) |
-| Terminal with a subcommand (`status`, `apikey`, `serve`, …) | Normal CLI on stdout/stderr, then exit |
+| Double-click / Start Menu / Applications / `struggletime --tray` | Tray icon + background tracker supervisor (no extra console on Windows) |
+| Terminal with no args (interactive TTY) | Prints `status`, then exits |
+| Terminal with a subcommand (`status`, `apikey`, `start`, …) | Normal CLI on stdout/stderr, then exit |
 
 App and CLI share settings, API key, linked projects, and the hash-chained ledger.
 

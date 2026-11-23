@@ -80,6 +80,7 @@ fn run_headless(interval: u64, state: Arc<Mutex<TrayState>>) -> Result<()> {
     println!("StruggleTime tray (headless supervisor)");
     println!("keeps the daemon running; Ctrl-C stops the supervisor (daemon stays up)");
     loop {
+        let _ = ensure_daemon_if_configured();
         refresh_hours(&state);
         println!(
             "[{}] {}",
@@ -87,7 +88,6 @@ fn run_headless(interval: u64, state: Arc<Mutex<TrayState>>) -> Result<()> {
             status_line(&state)
         );
         thread::sleep(Duration::from_secs(interval));
-        let _ = ensure_daemon_if_configured();
     }
 }
 
@@ -149,9 +149,19 @@ fn paused() -> bool {
     pause_flag_path().exists()
 }
 
+fn has_watch_targets(s: &Settings) -> bool {
+    s.projects.iter().any(|p| Path::new(&p.path).is_dir())
+        || (!s.repo.is_empty() && Path::new(&s.repo).is_dir())
+}
+
 fn ensure_daemon_if_configured() -> Result<()> {
     let s = load_settings().unwrap_or_default();
-    if s.token.is_empty() && s.repo.is_empty() && s.projects.is_empty() {
+    // Nothing to supervise until there is a key or a linked project folder.
+    if s.token.is_empty() && !has_watch_targets(&s) {
+        return Ok(());
+    }
+    // Starting with no watch paths just crash-loops the daemon.
+    if !has_watch_targets(&s) {
         return Ok(());
     }
     if !tracking() {
@@ -770,30 +780,32 @@ mod native {
     impl ApplicationHandler<UserEvent> for App {
         fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
 
-        fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+        fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
             // macOS: create the status item only after the event loop is running
             // (tray-icon docs / StartCause::Init), otherwise it never appears.
             if cause == StartCause::Init {
-                if let Err(e) = self.mount_tray() {
-                    eprintln!("StruggleTime tray icon failed: {e}");
-                } else {
-                    println!("StruggleTime tray (menu bar)");
-                    self.start_tick_thread();
-                    let s = load_settings().unwrap_or_default();
-                    if !s.token.is_empty()
-                        && (!s.repo.is_empty() || !s.projects.is_empty())
-                        && !tracking()
-                    {
-                        run_cli(&["start"]);
-                    } else if s.token.is_empty() {
-                        eprintln!("set your StruggleTime API key from Settings -> API key");
+                match self.mount_tray() {
+                    Ok(()) => {
+                        println!("StruggleTime tray (menu bar)");
+                        self.start_tick_thread();
+                        let s = load_settings().unwrap_or_default();
+                        if s.token.is_empty() {
+                            eprintln!("set your StruggleTime API key from Settings -> API key");
+                        } else if has_watch_targets(&s) && !tracking() {
+                            run_cli(&["start"]);
+                        }
+                        #[cfg(target_os = "macos")]
+                        unsafe {
+                            use objc2_core_foundation::{CFRunLoopGetMain, CFRunLoopWakeUp};
+                            if let Some(rl) = CFRunLoopGetMain() {
+                                CFRunLoopWakeUp(&rl);
+                            }
+                        }
                     }
-                }
-                #[cfg(target_os = "macos")]
-                unsafe {
-                    use objc2_core_foundation::{CFRunLoopGetMain, CFRunLoopWakeUp};
-                    if let Some(rl) = CFRunLoopGetMain() {
-                        CFRunLoopWakeUp(&rl);
+                    Err(e) => {
+                        eprintln!("StruggleTime tray icon failed: {e}");
+                        // Leave the event loop so caller can fall back to headless.
+                        event_loop.exit();
                     }
                 }
             }
@@ -817,10 +829,13 @@ mod native {
         }
 
         fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-            // Keep AppIndicator responsive without a dedicated gtk::main thread.
+            // Pump a few pending GTK events for AppIndicator without spinning forever.
             #[cfg(all(target_os = "linux", feature = "linux-tray"))]
             {
-                while gtk::events_pending() {
+                for _ in 0..32 {
+                    if !gtk::events_pending() {
+                        break;
+                    }
                     gtk::main_iteration_do(false);
                 }
             }

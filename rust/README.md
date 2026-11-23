@@ -33,9 +33,9 @@ Without `libxdo-dev`, the linker fails with `unable to find library -lxdo`.
 | (shared) | `st-core` | scoring, ledger, privacy |
 | `struggletime-server` *(separate)* | `st-server` | HTTP API + dashboard (not in the app) |
 
-Bare `struggletime`, desktop double-click, or `--tray` starts the tray.
-Terminal subcommands (`status`, `apikey`, …) run as a normal CLI (Windows
-release builds attach the parent console).
+Desktop double-click / no TTY / `--tray` starts the tray. Interactive terminal
+with no args prints `status`. Other subcommands (`apikey`, `start`, …) run as a
+normal CLI (Windows release builds attach the parent console).
 
 ```bash
 cargo test --workspace

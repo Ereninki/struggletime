@@ -12,6 +12,8 @@ use st_core::config::{
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(name = "struggletime-helper", about = "StruggleTime CLI (native)")]
@@ -264,6 +266,23 @@ fn start_daemon(s: &st_core::Settings) -> Result<()> {
         println!("already running (pid {})", read_pid().unwrap_or_default());
         return Ok(());
     }
+    let mut watch_paths: Vec<(PathBuf, String)> = Vec::new();
+    for p in &s.projects {
+        let path = PathBuf::from(&p.path);
+        if path.is_dir() {
+            watch_paths.push((path, p.id.clone()));
+        }
+    }
+    if watch_paths.is_empty() && !s.repo.is_empty() {
+        let path = PathBuf::from(&s.repo);
+        if path.is_dir() {
+            watch_paths.push((path, s.project.clone()));
+        }
+    }
+    if watch_paths.is_empty() {
+        bail!("no project folders to watch — pass --repo or link a project first");
+    }
+
     let bin = daemon_bin();
     let log = fs::OpenOptions::new()
         .create(true)
@@ -281,20 +300,15 @@ fn start_daemon(s: &st_core::Settings) -> Result<()> {
     if !s.handle.is_empty() {
         cmd.arg("--user").arg(&s.handle);
     }
-    for p in &s.projects {
-        let path = PathBuf::from(&p.path);
-        if path.is_dir() {
-            cmd.arg("--repo").arg(&path);
-            if !p.id.is_empty() {
+    for (path, id) in &watch_paths {
+        cmd.arg("--repo").arg(path);
+        if !id.is_empty() {
+            if s.projects.is_empty() {
+                cmd.arg("--project").arg(id);
+            } else {
                 cmd.arg("--project-map")
-                    .arg(format!("{}={}", path.display(), p.id));
+                    .arg(format!("{}={id}", path.display()));
             }
-        }
-    }
-    if s.projects.is_empty() && !s.repo.is_empty() {
-        cmd.arg("--repo").arg(&s.repo);
-        if !s.project.is_empty() {
-            cmd.arg("--project").arg(&s.project);
         }
     }
     let child = cmd.spawn().with_context(|| {
@@ -303,8 +317,19 @@ fn start_daemon(s: &st_core::Settings) -> Result<()> {
             bin.display()
         )
     })?;
-    fs::write(daemon_pid_path(), child.id().to_string())?;
-    println!("started (pid {})", child.id());
+    let pid = child.id();
+    fs::write(daemon_pid_path(), pid.to_string())?;
+    // Brief settle: if the child exits immediately, clear the stale pid so
+    // supervisors don't restart-spam a crashing daemon.
+    thread::sleep(Duration::from_millis(200));
+    if !daemon_alive() {
+        let _ = fs::remove_file(daemon_pid_path());
+        bail!(
+            "daemon exited immediately — check {}",
+            daemon_log_path().display()
+        );
+    }
+    println!("started (pid {pid})");
     println!("logging to {}", daemon_log_path().display());
     Ok(())
 }

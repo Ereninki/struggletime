@@ -4,7 +4,8 @@
 //! (`st-server`) so the app stays light.
 //!
 //! Dual entrypoint:
-//! - No subcommand / `--tray` / desktop launch → system tray
+//! - `--tray` / desktop (no TTY) → system tray
+//! - Interactive terminal with no args → `status` (then exit)
 //! - Terminal with a subcommand → normal stdout/stderr CLI
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
@@ -15,6 +16,7 @@ use st_core::verify::{verify_chain, FORMULA_VERSION};
 use st_daemon::{run as run_daemon, DaemonArgs};
 use st_helper::{run as run_helper, AdaptersAction, HelperCli, HelperCmd};
 use st_tray::{run as run_tray, TrayArgs};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -104,10 +106,12 @@ fn main() -> Result<()> {
         Cmd::Tray(TrayArgs::default())
     } else if let Some(cmd) = cli.cmd {
         cmd
-    } else {
-        // No subcommand: desktop app / bare `struggletime` → tray.
-        // Use `struggletime status` (or other subcommands) for CLI.
+    } else if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        // Double-click / GUI launch / piped invoke with no subcommand → tray.
         Cmd::Tray(TrayArgs::default())
+    } else {
+        // Interactive terminal with no args → status (do not block in the tray loop).
+        Cmd::Status
     };
 
     match cmd {
