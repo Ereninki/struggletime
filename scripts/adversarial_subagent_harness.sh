@@ -5,6 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${STRUGGLETIME_BIN:-$ROOT/rust/target/release/struggletime}"
+SERVER_BIN="${STRUGGLETIME_SERVER_BIN:-$ROOT/rust/target/release/struggletime-server}"
 PORT="${HARNESS_PORT:-0}"
 REAL_HOME="${HOME:-/root}"
 export RUSTUP_HOME="${RUSTUP_HOME:-$REAL_HOME/.rustup}"
@@ -31,6 +32,10 @@ if [[ ! -x "$BIN" ]]; then
   echo "== building struggletime"
   (cd "$ROOT/rust" && cargo build --release -p struggletime)
 fi
+if [[ ! -x "$SERVER_BIN" ]]; then
+  echo "== building struggletime-server"
+  (cd "$ROOT/rust" && cargo build --release -p st-server)
+fi
 
 # Pick a free local port unless HARNESS_PORT is set.
 if [[ "$PORT" = "0" ]]; then
@@ -38,7 +43,7 @@ if [[ "$PORT" = "0" ]]; then
 fi
 
 DB="$WORKDIR/db/server.db"
-"$BIN" serve --bind 127.0.0.1 --port "$PORT" --db "$DB" \
+"$SERVER_BIN" --bind 127.0.0.1 --port "$PORT" --db "$DB" \
   --static-dir "$ROOT/server/static" >"$WORKDIR/server.log" 2>&1 &
 SERVER_PID=$!
 

@@ -9,7 +9,7 @@ help:
 	@echo "make check             cargo test + adapter verify"
 	@echo "make adversarial       isolated subagent adversarial harness"
 	@echo "make clippy            cargo clippy -D warnings"
-	@echo "make server            struggletime serve on :$(PORT)"
+	@echo "make server            struggletime-server on :$(PORT) (separate binary)"
 	@echo "make daemon            struggletime daemon --repo=\$$REPO"
 	@echo "make tray              struggletime --tray"
 	@echo "make docs              build Fumadocs static site"
@@ -45,8 +45,9 @@ clippy:
 install install-binaries: rust
 	sh scripts/install.sh
 
-server: rust
-	PORT=$(PORT) ./rust/target/release/struggletime serve
+server:
+	cd rust && cargo build --release -p st-server
+	PORT=$(PORT) ./rust/target/release/struggletime-server
 
 daemon: rust
 	@test -n "$(REPO)" || (echo "set REPO=path/to/repo" && exit 1)

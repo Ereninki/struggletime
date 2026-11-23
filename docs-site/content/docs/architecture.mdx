@@ -18,7 +18,7 @@ description: Passive file tracking, shared st-core scoring, and the review surfa
 +--------------------+------------------------+
                      | POST /v1/buckets/batch
 +--------------------v------------------------+
-|  struggletime serve  (native HTTP)          |
+|  struggletime-server  (native HTTP, VPS)    |
 |  - auth, projects, stats                    |
 |  - allowlist schema                         |
 |  - static SPA + Fumadocs under /docs        |
@@ -54,7 +54,7 @@ is stamped on every accepted bucket.
 | `rust/crates/st-daemon` | Tracker library / binary |
 | `rust/crates/st-server` | HTTP API + static UI |
 | `rust/crates/st-helper` / `st-tray` | CLI + supervisor |
-| `rust/crates/struggletime` | Unified binary |
+| `rust/crates/struggletime` | Desktop app binary (no HTTP server) |
 | `rust/crates/st-core` | Shared verify / scoring |
 | `weighting/` | YAML rules + calibration notes |
 | `docs-site/` | Fumadocs MDX source |

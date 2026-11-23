@@ -1,7 +1,7 @@
 # Server static assets
 
-Static assets for `struggletime serve` (`server/static/`).
+Static assets for `struggletime-server` (`server/static/`).
 
 ```bash
-./rust/target/release/struggletime serve --port 18765
+./rust/target/release/struggletime-server --port 18765
 ```

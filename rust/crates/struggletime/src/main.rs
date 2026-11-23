@@ -1,4 +1,7 @@
-//! StruggleTime — single native binary (tray + CLI + daemon + local HTTP server).
+//! StruggleTime — desktop app binary (tray + CLI + daemon).
+//!
+//! The HTTP API / dashboard ships separately as `struggletime-server`
+//! (`st-server`) so the app stays light.
 //!
 //! Dual entrypoint:
 //! - No subcommand / `--tray` / desktop launch → system tray
@@ -11,14 +14,13 @@ use st_core::ledger::Ledger;
 use st_core::verify::{verify_chain, FORMULA_VERSION};
 use st_daemon::{run as run_daemon, DaemonArgs};
 use st_helper::{run as run_helper, AdaptersAction, HelperCli, HelperCmd};
-use st_server::{run as run_server, ServerArgs};
 use st_tray::{run as run_tray, TrayArgs};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "struggletime",
-    about = "StruggleTime: track struggle-weighted coding time (tray + CLI + daemon + server)",
+    about = "StruggleTime: track struggle-weighted coding time (tray + CLI + daemon)",
     version
 )]
 struct Cli {
@@ -34,8 +36,6 @@ struct Cli {
 enum Cmd {
     /// Watch projects and seal allowlisted metadata buckets
     Daemon(DaemonArgs),
-    /// Local HTTP API + dashboard
-    Serve(ServerArgs),
     /// Menu-bar / headless supervisor (keeps the daemon alive)
     Tray(TrayArgs),
     /// Verify a local `.aitime-ledger.json` hash chain
@@ -112,7 +112,6 @@ fn main() -> Result<()> {
 
     match cmd {
         Cmd::Daemon(args) => run_daemon(args),
-        Cmd::Serve(args) => run_server(args),
         Cmd::Tray(args) => run_tray(args),
         Cmd::Verify { ledger } => verify_ledger(ledger),
         Cmd::Apikey { key } => run_helper(HelperCli {

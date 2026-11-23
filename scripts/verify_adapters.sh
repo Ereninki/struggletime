@@ -45,20 +45,30 @@ else
   echo "ok  no legacy brand strings"
 fi
 
-# --- E2E against unified binary ---
+# --- E2E against desktop + server binaries ---
 BIN="$ROOT/rust/target/release/struggletime"
+SERVER_BIN="$ROOT/rust/target/release/struggletime-server"
 if [ ! -x "$BIN" ]; then
   echo "building struggletime…"
   ( cd "$ROOT/rust" && cargo build --release -p struggletime )
+fi
+if [ ! -x "$SERVER_BIN" ]; then
+  echo "building struggletime-server…"
+  ( cd "$ROOT/rust" && cargo build --release -p st-server )
 fi
 need_bin() {
   if [ ! -x "$BIN" ]; then
     echo "MISSING $BIN" >&2
     exit 1
   fi
+  if [ ! -x "$SERVER_BIN" ]; then
+    echo "MISSING $SERVER_BIN" >&2
+    exit 1
+  fi
 }
 need_bin
 echo "ok  binary $BIN"
+echo "ok  server $SERVER_BIN"
 
 BASE=$(mktemp -d /tmp/st-adapters-XXXXXX)
 export STRUGGLETIME_HOME="$BASE/runtime"
@@ -147,9 +157,9 @@ for i in range(1, len(d["entries"])):
 print("ok  multi-seal chain")
 PY
 
-# SQLite ingest via local serve
+# SQLite ingest via local struggletime-server
 DB="$BASE/server.db"
-"$BIN" serve --bind 127.0.0.1 --port 18778 --db "$DB" --static-dir "$ROOT/server/static" \
+"$SERVER_BIN" --bind 127.0.0.1 --port 18778 --db "$DB" --static-dir "$ROOT/server/static" \
   >"$BASE/server.log" 2>&1 &
 SPID=$!
 trap 'kill $SPID 2>/dev/null || true; rm -rf "$BASE"' EXIT

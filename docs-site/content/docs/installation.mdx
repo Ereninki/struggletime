@@ -150,7 +150,8 @@ git clone https://github.com/derekified/struggletime.git
 cd struggletime
 make rust
 make install                 # App + CLI via scripts/install.sh
-struggletime serve           # http://127.0.0.1:18765
+# API host only (separate binary, not in the desktop app):
+#   make server   → struggletime-server
 ```
 
 ### Linux build dependencies (tray)

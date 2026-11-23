@@ -3,7 +3,7 @@ name = "struggletime"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "StruggleTime single binary — tray, CLI, daemon, and local HTTP server"
+description = "StruggleTime desktop app — tray, CLI, and daemon (HTTP API is a separate binary)"
 
 [[bin]]
 name = "struggletime"
@@ -17,7 +17,6 @@ linux-tray = ["st-tray/linux-tray"]
 [dependencies]
 st-core = { workspace = true }
 st-daemon = { path = "../st-daemon" }
-st-server = { path = "../st-server" }
 st-helper = { path = "../st-helper" }
 st-tray = { path = "../st-tray" }
 clap = { workspace = true }

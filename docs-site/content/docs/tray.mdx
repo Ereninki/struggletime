@@ -3,10 +3,11 @@ title: CLI and tray
 description: One binary for the desktop tray app and the struggletime CLI.
 ---
 
-The release binary is one executable: `struggletime` / `struggletime.exe`.
-Tray, CLI, daemon, and local HTTP server all live inside it. Download from
-[GitHub Releases](https://github.com/derekified/struggletime/releases). See
-[Installation](/docs/installation) for App + PATH setup on each OS.
+The desktop release is one executable: `struggletime` / `struggletime.exe`
+(tray, CLI, and daemon). The HTTP API / dashboard is a separate
+`struggletime-server` binary for VPS hosts — not shipped inside the app.
+Download from [GitHub Releases](https://github.com/derekified/struggletime/releases).
+See [Installation](/docs/installation) for App + PATH setup on each OS.
 
 ## App mode vs CLI mode
 
@@ -48,12 +49,14 @@ item **install adapters…** runs the same install.
 Settings live in `~/.config/struggletime/settings.json`. `start` re-launches
 the same binary as `struggletime daemon` (or `STRUGGLETIME_DAEMON` if set).
 
-## Daemon and server
+## Daemon
 
 ```bash
 struggletime daemon --repo ~/my-project
-struggletime serve           # http://127.0.0.1:18765
 ```
+
+The public API / dashboard is `struggletime-server` (see [Deployment](/docs/deployment)),
+not part of the desktop app.
 
 ## Tray
 

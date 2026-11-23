@@ -35,7 +35,7 @@ Or download a release zip for your OS from:
 Then:
   struggletime apikey <st_…>
   struggletime start --repo ~/my-project
-  struggletime serve
+  # VPS API (separate binary): make server
 
 Requires: Rust toolchain (to build) or a prebuilt release zip; git.
 EOF

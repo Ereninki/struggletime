@@ -1,7 +1,8 @@
 # StruggleTime Rust workspace
 
-Single binary `struggletime` (crate `crates/struggletime`) bundles tray, CLI,
-daemon, and local HTTP server.
+Desktop binary `struggletime` (crate `crates/struggletime`) bundles tray, CLI,
+and daemon. The HTTP API / dashboard is a separate `struggletime-server`
+binary (`crates/st-server`) so the app stays light.
 
 ```bash
 cargo build --release -p struggletime
@@ -24,13 +25,13 @@ cargo build --release -p struggletime --features linux-tray
 
 Without `libxdo-dev`, the linker fails with `unable to find library -lxdo`.
 
-| Subcommand | Crate | Role |
+| Subcommand / binary | Crate | Role |
 |---|---|---|
 | `daemon` | `st-daemon` | watch repos, seal ledger, sync |
-| `serve` | `st-server` | API + static dashboard |
 | (CLI) | `st-helper` | apikey / start / stop / status |
 | `tray` / `--tray` | `st-tray` | desktop tray or headless supervisor |
 | (shared) | `st-core` | scoring, ledger, privacy |
+| `struggletime-server` *(separate)* | `st-server` | HTTP API + dashboard (not in the app) |
 
 Bare `struggletime`, desktop double-click, or `--tray` starts the tray.
 Terminal subcommands (`status`, `apikey`, …) run as a normal CLI (Windows

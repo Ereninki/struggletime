@@ -63,11 +63,12 @@ git clone https://github.com/derekified/struggletime.git
 cd struggletime
 make rust
 make install               # App + CLI
-struggletime serve         # http://127.0.0.1:18765
 struggletime apikey <st_…>
 struggletime start --repo ~/my-project
 struggletime status
 struggletime adapters install   # VS Code/Cursor, Neovim, Claude, hooks, …
+# API / dashboard (VPS only — not part of the desktop app):
+make server                # struggletime-server on :18765
 ```
 
 ### Linux tray build deps
@@ -94,7 +95,7 @@ Optional IDE and agent adapters live under `adapters/`.
 
 | Path | |
 |---|---|
-| `rust/` | unified `struggletime` binary (`make rust`) |
+| `rust/` | desktop `struggletime` + optional `struggletime-server` |
 | `daemon/` | installers, shell hooks, assets |
 | `scripts/install.sh` / `install.ps1` | App + CLI installers |
 | `adapters/` | optional editor / agent bridges |
@@ -110,7 +111,7 @@ make rust              # release binary
 make install           # desktop app + CLI on PATH
 make check             # cargo test + adapter verify
 make clippy
-make server            # struggletime serve
+make server            # struggletime-server (separate binary)
 make docs              # build /docs
 ```
 
