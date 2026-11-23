@@ -3086,6 +3086,8 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "gtk",
+ "objc2-core-foundation",
  "open",
  "reqwest",
  "resvg",

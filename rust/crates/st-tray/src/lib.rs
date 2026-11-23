@@ -504,8 +504,8 @@ mod native {
     use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
     use tray_icon::{TrayIconBuilder, TrayIconEvent};
     use winit::application::ApplicationHandler;
-    use winit::event::WindowEvent;
-    use winit::event_loop::{ActiveEventLoop, EventLoop};
+    use winit::event::{StartCause, WindowEvent};
+    use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
     use winit::window::WindowId;
 
     #[derive(Debug)]
@@ -514,6 +514,7 @@ mod native {
         Tick,
     }
 
+    #[derive(Clone)]
     struct MenuIds {
         set_key: tray_icon::menu::MenuId,
         get_key: tray_icon::menu::MenuId,
@@ -612,19 +613,59 @@ mod native {
     struct App {
         state: Arc<Mutex<TrayState>>,
         stop: Arc<AtomicBool>,
+        proxy: EventLoopProxy<UserEvent>,
+        interval: u64,
         tray: Option<tray_icon::TrayIcon>,
-        ids: MenuIds,
-        item_status: MenuItem,
-        item_today: MenuItem,
-        item_clear: MenuItem,
-        item_link: MenuItem,
-        item_create: MenuItem,
-        item_start: MenuItem,
-        item_stop: MenuItem,
+        ids: Option<MenuIds>,
+        item_status: Option<MenuItem>,
+        item_today: Option<MenuItem>,
+        item_clear: Option<MenuItem>,
+        item_link: Option<MenuItem>,
+        item_create: Option<MenuItem>,
+        item_start: Option<MenuItem>,
+        item_stop: Option<MenuItem>,
         icon_key: (bool, bool, String),
+        tick_started: bool,
     }
 
     impl App {
+        fn mount_tray(&mut self) -> Result<()> {
+            if self.tray.is_some() {
+                return Ok(());
+            }
+            refresh_hours(&self.state);
+            let built = build_menu(&self.state)?;
+            let s = load_settings().unwrap_or_default();
+            let th = theme::resolve_theme(&s.theme);
+            let track = tracking();
+            let pause = paused();
+            let ic = icon::make_icon(th, track, pause)?;
+            let tip = format_duration(self.state.lock().map(|g| g.hours).unwrap_or(0.0));
+            let builder = TrayIconBuilder::new()
+                .with_menu(Box::new(built.menu))
+                .with_tooltip(tip.clone())
+                .with_icon(ic)
+                .with_title(tip);
+            #[cfg(target_os = "macos")]
+            let builder = builder.with_icon_as_template(true);
+            let tray = builder
+                .build()
+                .map_err(|e| anyhow::anyhow!("tray icon: {e}"))?;
+
+            self.ids = Some(built.ids);
+            self.item_status = Some(built.item_status);
+            self.item_today = Some(built.item_today);
+            self.item_clear = Some(built.item_clear);
+            self.item_link = Some(built.item_link);
+            self.item_create = Some(built.item_create);
+            self.item_start = Some(built.item_start);
+            self.item_stop = Some(built.item_stop);
+            self.icon_key = (track, pause, th.id.to_string());
+            self.tray = Some(tray);
+            self.refresh_chrome();
+            Ok(())
+        }
+
         fn refresh_chrome(&mut self) {
             refresh_hours(&self.state);
             let s = load_settings().unwrap_or_default();
@@ -636,6 +677,9 @@ mod native {
                 self.icon_key = key;
                 if let Ok(ic) = icon::make_icon(th, track, pause) {
                     if let Some(tray) = &self.tray {
+                        #[cfg(target_os = "macos")]
+                        let _ = tray.set_icon_with_as_template(Some(ic), true);
+                        #[cfg(not(target_os = "macos"))]
                         let _ = tray.set_icon(Some(ic));
                     }
                 }
@@ -645,40 +689,57 @@ mod native {
                 let _ = tray.set_tooltip(Some(tip.clone()));
                 tray.set_title(Some(tip));
             }
-            self.item_status.set_text(status_line(&self.state));
-            self.item_today.set_text(today_line(&self.state));
+            if let Some(item) = &self.item_status {
+                item.set_text(status_line(&self.state));
+            }
+            if let Some(item) = &self.item_today {
+                item.set_text(today_line(&self.state));
+            }
             let has_token = !s.token.is_empty();
-            self.item_clear.set_enabled(has_token);
-            self.item_link.set_enabled(has_token);
-            self.item_create.set_enabled(has_token);
-            self.item_start.set_enabled(!track);
-            self.item_stop.set_enabled(track);
+            if let Some(item) = &self.item_clear {
+                item.set_enabled(has_token);
+            }
+            if let Some(item) = &self.item_link {
+                item.set_enabled(has_token);
+            }
+            if let Some(item) = &self.item_create {
+                item.set_enabled(has_token);
+            }
+            if let Some(item) = &self.item_start {
+                item.set_enabled(!track);
+            }
+            if let Some(item) = &self.item_stop {
+                item.set_enabled(track);
+            }
         }
 
         fn handle_menu(&mut self, id: &tray_icon::menu::MenuId, event_loop: &ActiveEventLoop) {
-            if id == &self.ids.set_key {
+            let Some(ids) = self.ids.clone() else {
+                return;
+            };
+            if id == &ids.set_key {
                 do_set_api_key();
-            } else if id == &self.ids.get_key {
+            } else if id == &ids.get_key {
                 do_open_api_key_page();
-            } else if id == &self.ids.clear_key {
+            } else if id == &ids.clear_key {
                 do_clear_api_key();
-            } else if id == &self.ids.link {
+            } else if id == &ids.link {
                 do_link_project(false);
-            } else if id == &self.ids.create {
+            } else if id == &ids.create {
                 do_link_project(true);
-            } else if id == &self.ids.start {
+            } else if id == &ids.start {
                 run_cli(&["start"]);
-            } else if id == &self.ids.stop {
+            } else if id == &ids.stop {
                 run_cli(&["stop"]);
-            } else if id == &self.ids.dash {
+            } else if id == &ids.dash {
                 do_dashboard();
-            } else if id == &self.ids.inspect {
+            } else if id == &ids.inspect {
                 do_inspect();
-            } else if id == &self.ids.adapters {
+            } else if id == &ids.adapters {
                 do_install_adapters();
-            } else if id == &self.ids.settings {
+            } else if id == &ids.settings {
                 do_settings();
-            } else if id == &self.ids.quit {
+            } else if id == &ids.quit {
                 self.stop.store(true, Ordering::SeqCst);
                 run_cli(&["stop"]);
                 event_loop.exit();
@@ -686,10 +747,58 @@ mod native {
             }
             self.refresh_chrome();
         }
+
+        fn start_tick_thread(&mut self) {
+            if self.tick_started {
+                return;
+            }
+            self.tick_started = true;
+            let proxy = self.proxy.clone();
+            let stop = Arc::clone(&self.stop);
+            let interval = self.interval;
+            thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    thread::sleep(Duration::from_secs(interval));
+                    if proxy.send_event(UserEvent::Tick).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
     }
 
     impl ApplicationHandler<UserEvent> for App {
         fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+
+        fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+            // macOS: create the status item only after the event loop is running
+            // (tray-icon docs / StartCause::Init), otherwise it never appears.
+            if cause == StartCause::Init {
+                if let Err(e) = self.mount_tray() {
+                    eprintln!("StruggleTime tray icon failed: {e}");
+                } else {
+                    println!("StruggleTime tray (menu bar)");
+                    self.start_tick_thread();
+                    let s = load_settings().unwrap_or_default();
+                    if !s.token.is_empty()
+                        && (!s.repo.is_empty() || !s.projects.is_empty())
+                        && !tracking()
+                    {
+                        run_cli(&["start"]);
+                    } else if s.token.is_empty() {
+                        eprintln!("set your StruggleTime API key from Settings -> API key");
+                    }
+                }
+                #[cfg(target_os = "macos")]
+                unsafe {
+                    use objc2_core_foundation::{CFRunLoopGetMain, CFRunLoopWakeUp};
+                    if let Some(rl) = CFRunLoopGetMain() {
+                        CFRunLoopWakeUp(&rl);
+                    }
+                }
+            }
+        }
+
         fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
             match event {
                 UserEvent::Tick => {
@@ -706,69 +815,65 @@ mod native {
             _event: WindowEvent,
         ) {
         }
+
+        fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+            // Keep AppIndicator responsive without a dedicated gtk::main thread.
+            #[cfg(all(target_os = "linux", feature = "linux-tray"))]
+            {
+                while gtk::events_pending() {
+                    gtk::main_iteration_do(false);
+                }
+            }
+            let _ = event_loop;
+        }
     }
 
     pub fn run_native_tray(interval: u64, state: Arc<Mutex<TrayState>>) -> Result<()> {
         refresh_hours(&state);
-        let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
-        let proxy = event_loop.create_proxy();
-        let built = build_menu(&state)?;
-        let s = load_settings().unwrap_or_default();
-        let th = theme::resolve_theme(&s.theme);
-        let track = tracking();
-        let pause = paused();
-        let ic = icon::make_icon(th, track, pause)?;
-        let tip = format_duration(state.lock().map(|g| g.hours).unwrap_or(0.0));
-        let tray = TrayIconBuilder::new()
-            .with_menu(Box::new(built.menu))
-            .with_tooltip(tip.clone())
-            .with_icon(ic)
-            .with_title(tip)
-            .build()
-            .map_err(|e| anyhow::anyhow!("tray icon: {e}"))?;
 
-        let stop = Arc::new(AtomicBool::new(false));
+        // AppIndicator / libayatana requires GTK to be initialized on Linux.
+        #[cfg(all(target_os = "linux", feature = "linux-tray"))]
+        gtk::init().map_err(|e| anyhow::anyhow!("gtk init: {e}"))?;
+
+        let mut builder = EventLoop::<UserEvent>::with_user_event();
+        #[cfg(target_os = "macos")]
         {
-            let proxy = proxy.clone();
-            let stop = Arc::clone(&stop);
-            thread::spawn(move || {
-                while !stop.load(Ordering::SeqCst) {
-                    thread::sleep(Duration::from_secs(interval));
-                    if proxy.send_event(UserEvent::Tick).is_err() {
-                        break;
-                    }
-                }
-            });
+            use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+            // Menu-bar agent: no Dock icon (matches LSUIElement in the .app).
+            builder.with_activation_policy(ActivationPolicy::Accessory);
+            builder.with_default_menu(false);
         }
+        let event_loop = builder.build()?;
+        let proxy = event_loop.create_proxy();
+
         let menu_proxy = proxy.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             let _ = menu_proxy.send_event(UserEvent::Menu(event.id));
         }));
-        TrayIconEvent::set_event_handler(Some(|_| {}));
+        let tray_proxy = proxy.clone();
+        TrayIconEvent::set_event_handler(Some(move |_| {
+            let _ = tray_proxy.send_event(UserEvent::Tick);
+        }));
 
         let s = load_settings().unwrap_or_default();
-        if !s.token.is_empty() && (!s.repo.is_empty() || !s.projects.is_empty()) && !tracking() {
-            run_cli(&["start"]);
-        } else if s.token.is_empty() {
-            eprintln!("set your StruggleTime API key from Settings -> API key");
-        }
-
+        let th = theme::resolve_theme(&s.theme);
         let mut app = App {
             state,
-            stop,
-            tray: Some(tray),
-            ids: built.ids,
-            item_status: built.item_status,
-            item_today: built.item_today,
-            item_clear: built.item_clear,
-            item_link: built.item_link,
-            item_create: built.item_create,
-            item_start: built.item_start,
-            item_stop: built.item_stop,
-            icon_key: (track, pause, th.id.to_string()),
+            stop: Arc::new(AtomicBool::new(false)),
+            proxy,
+            interval: interval.max(5),
+            tray: None,
+            ids: None,
+            item_status: None,
+            item_today: None,
+            item_clear: None,
+            item_link: None,
+            item_create: None,
+            item_start: None,
+            item_stop: None,
+            icon_key: (tracking(), paused(), th.id.to_string()),
+            tick_started: false,
         };
-        app.refresh_chrome();
-        println!("StruggleTime tray (menu bar)");
         event_loop.run_app(&mut app)?;
         Ok(())
     }

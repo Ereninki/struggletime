@@ -9,7 +9,13 @@ use anyhow::Result;
 ))]
 pub fn make_icon(theme: ThemePalette, tracking: bool, paused: bool) -> Result<tray_icon::Icon> {
     use crate::theme::icon_fg;
+    // macOS menu-bar status items should be template images (black + alpha);
+    // the system tints them for light/dark menu bars.
+    #[cfg(target_os = "macos")]
+    let fg = "#000000";
+    #[cfg(not(target_os = "macos"))]
     let fg = icon_fg(theme, tracking, paused);
+    let _ = (theme, tracking, paused);
     let (rgba, w, h) = render_svg_rgba(fg, 64)?;
     tray_icon::Icon::from_rgba(rgba, w, h).map_err(|e| anyhow::anyhow!(e))
 }
