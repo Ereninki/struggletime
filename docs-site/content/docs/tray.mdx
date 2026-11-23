@@ -12,9 +12,8 @@ Tray, CLI, daemon, and local HTTP server all live inside it. Download from
 
 | How you launch | What happens |
 |---|---|
-| Double-click / Start Menu / Applications / `struggletime --tray` | Tray icon + background tracker supervisor (no extra console on Windows) |
+| Double-click / Start Menu / Applications / bare `struggletime` / `--tray` | Tray icon + background tracker supervisor (no extra console on Windows) |
 | Terminal with a subcommand (`status`, `apikey`, `serve`, …) | Normal CLI on stdout/stderr, then exit |
-| Terminal with no args (interactive TTY) | Prints `status` |
 
 App and CLI share settings, API key, linked projects, and the hash-chained ledger.
 

@@ -101,7 +101,7 @@ case "$OS" in
     fi
     echo "App: $APP_DEST"
     echo "CLI: $BIN_DIR/struggletime"
-    echo "Open StruggleTime from Applications, or run: struggletime --tray"
+    echo "Open StruggleTime from Applications, or run: struggletime"
     ;;
   Linux)
     install -m 755 "$SRC" "$BIN_DIR/struggletime"
@@ -121,7 +121,7 @@ case "$OS" in
 Type=Application
 Name=StruggleTime
 Comment=Track struggle-weighted coding time
-Exec=$BIN_DIR/struggletime --tray
+Exec=$BIN_DIR/struggletime
 Icon=struggletime
 Terminal=false
 Categories=Development;Utility;

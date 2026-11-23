@@ -32,9 +32,9 @@ Without `libxdo-dev`, the linker fails with `unable to find library -lxdo`.
 | `tray` / `--tray` | `st-tray` | desktop tray or headless supervisor |
 | (shared) | `st-core` | scoring, ledger, privacy |
 
-Desktop double-click / no TTY / `--tray` starts the tray. Terminal commands
-(`status`, `apikey`, …) run as a normal CLI (Windows release builds attach the
-parent console).
+Bare `struggletime`, desktop double-click, or `--tray` starts the tray.
+Terminal subcommands (`status`, `apikey`, …) run as a normal CLI (Windows
+release builds attach the parent console).
 
 ```bash
 cargo test --workspace

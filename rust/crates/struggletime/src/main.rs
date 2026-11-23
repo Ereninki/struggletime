@@ -1,8 +1,8 @@
 //! StruggleTime — single native binary (tray + CLI + daemon + local HTTP server).
 //!
 //! Dual entrypoint:
-//! - Desktop / no TTY / `--tray` → system tray (no console window on Windows release builds)
-//! - Terminal with CLI args → normal stdout/stderr CLI
+//! - No subcommand / `--tray` / desktop launch → system tray
+//! - Terminal with a subcommand → normal stdout/stderr CLI
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use anyhow::{bail, Context, Result};
@@ -13,7 +13,6 @@ use st_daemon::{run as run_daemon, DaemonArgs};
 use st_helper::{run as run_helper, AdaptersAction, HelperCli, HelperCmd};
 use st_server::{run as run_server, ServerArgs};
 use st_tray::{run as run_tray, TrayArgs};
-use std::io::IsTerminal;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -105,11 +104,10 @@ fn main() -> Result<()> {
         Cmd::Tray(TrayArgs::default())
     } else if let Some(cmd) = cli.cmd {
         cmd
-    } else if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        // Double-click / GUI launch / piped invoke with no subcommand → tray.
-        Cmd::Tray(TrayArgs::default())
     } else {
-        Cmd::Status
+        // No subcommand: desktop app / bare `struggletime` → tray.
+        // Use `struggletime status` (or other subcommands) for CLI.
+        Cmd::Tray(TrayArgs::default())
     };
 
     match cmd {

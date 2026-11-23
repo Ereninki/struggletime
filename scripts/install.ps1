@@ -37,6 +37,23 @@ $Exe = Join-Path $Dest "struggletime.exe"
 Copy-Item $Src $Exe -Force
 Write-Host "installed $Exe"
 
+# StruggleTime icon next to the exe (Start Menu / shortcuts).
+$IconCandidates = @(
+  (Join-Path $Root "daemon\assets\struggletime.ico"),
+  (Join-Path (Split-Path -Parent $Src) "struggletime.ico"),
+  (Join-Path (Get-Location) "struggletime.ico"),
+  (Join-Path (Get-Location) "share\icons\struggletime.ico")
+)
+$IconPath = $null
+foreach ($c in $IconCandidates) {
+  if ($c -and (Test-Path $c)) {
+    $IconPath = Join-Path $Dest "struggletime.ico"
+    Copy-Item $c $IconPath -Force
+    Write-Host "icon: $IconPath"
+    break
+  }
+}
+
 # User PATH
 $binDir = $Dest
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -58,10 +75,11 @@ $lnkPath = Join-Path $programs "StruggleTime.lnk"
 $w = New-Object -ComObject WScript.Shell
 $sc = $w.CreateShortcut($lnkPath)
 $sc.TargetPath = $Exe
-$sc.Arguments = "--tray"
+$sc.Arguments = ""
 $sc.WorkingDirectory = $Dest
 $sc.WindowStyle = 7
 $sc.Description = "StruggleTime tray"
+if ($IconPath) { $sc.IconLocation = "$IconPath,0" }
 $sc.Save()
 Write-Host "Start Menu: $lnkPath"
 
@@ -70,10 +88,11 @@ if ($Autostart) {
   $auto = Join-Path $startup "StruggleTime.lnk"
   $sc2 = $w.CreateShortcut($auto)
   $sc2.TargetPath = $Exe
-  $sc2.Arguments = "--tray"
+  $sc2.Arguments = ""
   $sc2.WorkingDirectory = $Dest
   $sc2.WindowStyle = 7
   $sc2.Description = "StruggleTime tray (login)"
+  if ($IconPath) { $sc2.IconLocation = "$IconPath,0" }
   $sc2.Save()
   Write-Host "Startup: $auto"
 }

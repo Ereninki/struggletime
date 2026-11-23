@@ -17,7 +17,7 @@ export PATH="\$HOME/.local/bin:\$PATH"
 export STRUGGLETIME_CONFIG="\${STRUGGLETIME_CONFIG:-\$HOME/.config/struggletime}"
 export AITIME_HOME="\${AITIME_HOME:-\$HOME/.aitime}"
 mkdir -p "\$STRUGGLETIME_CONFIG" "\$AITIME_HOME"
-exec struggletime --tray
+exec struggletime
 EOF
 chmod +x "$LAUNCHER"
 
@@ -58,7 +58,6 @@ EOF
   <key>ProgramArguments</key>
   <array>
     <string>$BIN/struggletime</string>
-    <string>--tray</string>
   </array>
   <key>RunAtLoad</key><true/>
 </dict></plist>

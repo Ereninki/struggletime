@@ -16,6 +16,12 @@ case "$ARTIFACT" in
   *windows*)
     cp "$BIN" "$OUT/struggletime.exe"
     cp "$ROOT/scripts/install.ps1" "$OUT/install.ps1"
+    if [ -f "$ROOT/daemon/assets/struggletime.ico" ]; then
+      cp "$ROOT/daemon/assets/struggletime.ico" "$OUT/struggletime.ico"
+      mkdir -p "$OUT/daemon/assets"
+      cp "$ROOT/daemon/assets/struggletime.ico" "$OUT/daemon/assets/struggletime.ico"
+      cp "$ROOT/daemon/assets/struggletime.svg" "$OUT/daemon/assets/struggletime.svg" 2>/dev/null || true
+    fi
     if [ -d "$ROOT/adapters" ]; then
       cp -a "$ROOT/adapters" "$OUT/adapters"
     fi
@@ -39,6 +45,7 @@ Optional login autostart:
   powershell -ExecutionPolicy Bypass -File .\install.ps1 -Autostart
 
 Then:
+  struggletime              # tray
   struggletime --version
   struggletime apikey <st_…>
   struggletime status
@@ -88,6 +95,14 @@ EOF
     if [ -f "$ROOT/daemon/assets/struggletime.svg" ]; then
       cp "$ROOT/daemon/assets/struggletime.svg" "$OUT/share/icons/struggletime.svg"
     fi
+    if [ -f "$ROOT/daemon/assets/struggletime.ico" ]; then
+      cp "$ROOT/daemon/assets/struggletime.ico" "$OUT/share/icons/struggletime.ico"
+    fi
+    if [ -f "$ROOT/daemon/assets/AppIcon.icns" ]; then
+      mkdir -p "$OUT/daemon/assets"
+      cp "$ROOT/daemon/assets/AppIcon.icns" "$OUT/daemon/assets/AppIcon.icns"
+      cp "$ROOT/daemon/assets/struggletime.svg" "$OUT/daemon/assets/struggletime.svg" 2>/dev/null || true
+    fi
     if [ -d "$ROOT/adapters" ]; then
       cp -a "$ROOT/adapters" "$OUT/adapters"
     fi
@@ -100,7 +115,7 @@ EOF
 Type=Application
 Name=StruggleTime
 Comment=Track struggle-weighted coding time
-Exec=struggletime --tray
+Exec=struggletime
 Icon=struggletime
 Terminal=false
 Categories=Development;Utility;
@@ -122,6 +137,7 @@ libayatana-appindicator3 (or libappindicator). Without them, StruggleTime still
 runs a headless supervisor.
 
 Then:
+  struggletime              # tray
   struggletime --version
   struggletime apikey <st_…>
   struggletime status
