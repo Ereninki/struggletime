@@ -18,6 +18,7 @@ use st_helper::{run as run_helper, AdaptersAction, HelperCli, HelperCmd};
 use st_tray::{run as run_tray, TrayArgs};
 use std::io::IsTerminal;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -116,7 +117,14 @@ fn main() -> Result<()> {
 
     match cmd {
         Cmd::Daemon(args) => run_daemon(args),
-        Cmd::Tray(args) => run_tray(args),
+        Cmd::Tray(args) => {
+            // From an interactive terminal, detach so the shell stays usable
+            // (otherwise `struggletime --tray` looks hung / opens a stuck window).
+            if should_detach_tray(&args) {
+                return spawn_detached_tray(&args);
+            }
+            run_tray(args)
+        }
         Cmd::Verify { ledger } => verify_ledger(ledger),
         Cmd::Apikey { key } => run_helper(HelperCli {
             cmd: HelperCmd::Apikey { key },
@@ -168,6 +176,64 @@ fn main() -> Result<()> {
             cmd: HelperCmd::Adapters { action },
         }),
     }
+}
+
+fn should_detach_tray(args: &TrayArgs) -> bool {
+    if args.headless {
+        return false;
+    }
+    if std::env::var_os("STRUGGLETIME_TRAY_FOREGROUND").is_some() {
+        return false;
+    }
+    // Already a background/GUI launch (Finder, Start Menu, LaunchAgent).
+    if !std::io::stdin().is_terminal() && !std::io::stdout().is_terminal() {
+        return false;
+    }
+    std::io::stdin().is_terminal() || std::io::stdout().is_terminal()
+}
+
+fn spawn_detached_tray(args: &TrayArgs) -> Result<()> {
+    let exe = std::env::current_exe().context("current_exe")?;
+    let mut cmd = Command::new(&exe);
+    cmd.arg("tray");
+    if args.headless {
+        cmd.arg("--headless");
+    }
+    if args.interval != 15 {
+        cmd.arg("--interval").arg(args.interval.to_string());
+    }
+    cmd.env("STRUGGLETIME_TRAY_FOREGROUND", "1");
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                // New session so closing the terminal does not kill the tray.
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
+    }
+    let child = cmd
+        .spawn()
+        .with_context(|| format!("spawn {}", exe.display()))?;
+    println!(
+        "StruggleTime tray started (pid {}) — menu bar / system tray",
+        child.id()
+    );
+    Ok(())
 }
 
 fn verify_ledger(path: Option<PathBuf>) -> Result<()> {

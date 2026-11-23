@@ -58,6 +58,7 @@ EOF
   <key>ProgramArguments</key>
   <array>
     <string>$BIN/struggletime</string>
+    <string>--tray</string>
   </array>
   <key>RunAtLoad</key><true/>
 </dict></plist>

@@ -14,20 +14,13 @@ APP_VERSION="${STRUGGLETIME_VERSION:-}"
 if [ -z "$APP_VERSION" ] && [ -f "$ROOT/rust/Cargo.toml" ]; then
   APP_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT/rust/Cargo.toml" | head -1)"
 fi
-APP_VERSION="${APP_VERSION:-0.1.3}"
+APP_VERSION="${APP_VERSION:-0.1.4}"
 
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RES"
+# Native Mach-O only — a shell wrapper makes macOS open Terminal.app.
 cp "$BIN" "$MACOS/struggletime"
 chmod +x "$MACOS/struggletime"
-
-# Finder / Launchpad entry: always start tray (no Dock icon via LSUIElement).
-cat > "$MACOS/StruggleTime" <<'WRAP'
-#!/bin/sh
-DIR="$(cd "$(dirname "$0")" && pwd)"
-exec "$DIR/struggletime" --tray
-WRAP
-chmod +x "$MACOS/StruggleTime"
 
 ICON_SRC="$ROOT/daemon/assets/struggletime.svg"
 ICNS_SRC="$ROOT/daemon/assets/AppIcon.icns"
@@ -79,7 +72,7 @@ fi
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>StruggleTime</string>
+  <string>struggletime</string>
   <key>CFBundleIdentifier</key>
   <string>com.struggletime.app</string>
   <key>CFBundleInfoDictionaryVersion</key>

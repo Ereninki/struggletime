@@ -3127,6 +3127,7 @@ version = "0.1.4"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
  "serde_json",
  "st-core",
  "st-daemon",
