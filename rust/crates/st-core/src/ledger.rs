@@ -88,4 +88,72 @@ impl Ledger {
                 .unwrap_or(false)
         });
     }
+
+    /// Ensure pending buckets include production-required `git: {}` (and re-hash).
+    /// Older daemons sealed without `git`, which `struggletime.screenseekr.com` rejects with 400.
+    pub fn ensure_sync_shape(&mut self) -> bool {
+        let mut changed = false;
+        for b in self.pending.iter_mut().chain(self.entries.iter_mut()) {
+            let Some(obj) = b.as_object_mut() else {
+                continue;
+            };
+            if obj.get("git").map(|v| v.is_object()).unwrap_or(false) {
+                continue;
+            }
+            obj.insert("git".into(), json!({}));
+            obj.remove("hash");
+            obj.remove("signature");
+            let h = bucket_hash(b);
+            if let Some(obj) = b.as_object_mut() {
+                obj.insert("hash".into(), json!(h));
+            }
+            changed = true;
+        }
+        if changed {
+            if let Some(h) = self
+                .entries
+                .last()
+                .and_then(|e| e.get("hash"))
+                .and_then(|v| v.as_str())
+            {
+                self.chain_head = h.to_string();
+            }
+        }
+        changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn ensure_sync_shape_adds_git_and_rehashes() {
+        let mut led = Ledger {
+            salt: "s".into(),
+            chain_head: GENESIS.into(),
+            ..Default::default()
+        };
+        let mut b = json!({
+            "bucket_id": "x",
+            "project_id": "p",
+            "bucket_start_wall": 1,
+            "bucket_secs": 60,
+            "mono_delta_ms": 0,
+            "counts": {"human_edits": 1},
+            "prev_hash": GENESIS
+        });
+        let h = bucket_hash(&b);
+        b.as_object_mut().unwrap().insert("hash".into(), json!(h));
+        led.pending.push(b.clone());
+        led.entries.push(b);
+        assert!(led.ensure_sync_shape());
+        let p = &led.pending[0];
+        assert!(p.get("git").unwrap().is_object());
+        assert_eq!(
+            p.get("hash").and_then(|v| v.as_str()).unwrap(),
+            bucket_hash(p)
+        );
+    }
 }

@@ -15,7 +15,7 @@ APP_VERSION="${STRUGGLETIME_VERSION:-}"
 if [ -z "$APP_VERSION" ] && [ -f "$ROOT/rust/Cargo.toml" ]; then
   APP_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT/rust/Cargo.toml" | head -1)"
 fi
-APP_VERSION="${APP_VERSION:-0.1.6}"
+APP_VERSION="${APP_VERSION:-0.1.7}"
 
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RES"

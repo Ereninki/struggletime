@@ -10,8 +10,8 @@
 use anyhow::Result;
 use clap::Parser;
 use st_core::config::{
-    daemon_pid_path, load_settings, normalize_server, pause_flag_path, runtime_home, save_settings,
-    settings_path, upsert_linked_project, Settings,
+    daemon_pid_path, link_project, load_settings, normalize_server, pause_flag_path, runtime_home,
+    save_settings, settings_path, Settings,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -445,7 +445,10 @@ fn do_link_project(create: bool) {
         .unwrap_or("project")
         .to_string();
     let mut s = load_settings().unwrap_or_default();
-    upsert_linked_project(&mut s, &id, &folder);
+    if let Err(e) = link_project(&mut s, &id, &folder, create) {
+        let _ = dialogs::alert("StruggleTime", &e.to_string());
+        return;
+    }
     let _ = save_settings(&s);
     if tracking() {
         run_cli(&["stop"]);
@@ -459,7 +462,7 @@ fn do_link_project(create: bool) {
     ]);
     let _ = dialogs::alert(
         "StruggleTime",
-        &format!("linked {id} -> {}", folder.display()),
+        &format!("linked {id} → {}", folder.display()),
     );
 }
 

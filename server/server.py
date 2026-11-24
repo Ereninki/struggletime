@@ -2107,9 +2107,18 @@ class H(BaseHTTPRequestHandler):
                     "hint": "daemon should flush pending in chunks",
                 })
             for i, b in enumerate(buckets):
-                if not isinstance(b, dict) or not isinstance(b.get("counts"), dict) or not isinstance(b.get("git"), dict) \
+                if not isinstance(b, dict) or not isinstance(b.get("counts"), dict) \
                    or not all(k in b for k in ("bucket_id","project_id","prev_hash","hash","bucket_secs","bucket_start_wall","mono_delta_ms")):
-                    return self.send_json(400, {"error": f"bucket {i}: missing required fields"})
+                    return self.send_json(400, {
+                        "error": f"bucket {i}: missing required fields",
+                        "hint": "need bucket_id, project_id, counts, hash chain, bucket_secs, wall/mono clocks",
+                    })
+                if not isinstance(b.get("git"), dict):
+                    return self.send_json(400, {
+                        "error": f"bucket {i}: missing required fields",
+                        "missing": ["git"],
+                        "hint": "each bucket needs a git object (use {} when no git stats); upgrade struggletime daemon",
+                    })
             user = self.auth_handle(c)
             if not user and os.environ.get("STRUGGLETIME_DEV_INGEST") == "1":
                 user = (d.get("user_id") or "").strip() or None
@@ -2130,9 +2139,16 @@ class H(BaseHTTPRequestHandler):
             for i, b in enumerate(buckets):
                 if b["bucket_id"] in seen and bucket_hash(b) != seen[b["bucket_id"]]:
                     return self.send_json(422, {"error": f"bucket {i}: hash mismatch (tampered replay of known bucket_id)"})
+            # Idempotent ingest: skip bucket_ids already accepted so daemon retries after a
+            # partial ack do not 409 the whole pending queue (dashboard would stay stale).
             fresh = [b for b in buckets if b["bucket_id"] not in seen]
-            if len(fresh) != len(buckets):
-                return self.send_json(409, {"error": "duplicate bucket_id", "duplicates": len(buckets) - len(fresh)})
+            dupes = len(buckets) - len(fresh)
+            if not fresh:
+                return self.send_json(200, {
+                    "accepted": 0, "duplicates": dupes, "weighted_secs_added": 0,
+                    "weighted_hours_added": 0, "unsigned_buckets": 0,
+                    "ok": True, "hint": "all bucket_ids already stored",
+                })
             for i, b in enumerate(fresh):
                 if b["prev_hash"] != prev: return self.send_json(422, {"error": f"bucket {i}: prev_hash mismatch (chain broken)"})
                 if bucket_hash(b) != b["hash"]: return self.send_json(422, {"error": f"bucket {i}: hash mismatch (tampered)"})
@@ -2186,7 +2202,9 @@ class H(BaseHTTPRequestHandler):
                 c.execute("UPDATE project SET owner=? WHERE id=? AND (owner IS NULL OR owner='')", (user, project))
             c.commit()
             return self.send_json(201, {
+                "ok": True,
                 "accepted": len(fresh),
+                "duplicates": dupes,
                 "weighted_secs_added": total,
                 "weighted_hours_added": round(total / 3600, 4),
                 "unsigned_buckets": unsigned,

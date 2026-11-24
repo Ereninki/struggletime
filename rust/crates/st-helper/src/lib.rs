@@ -6,8 +6,8 @@ pub use adapters::{install_adapters, install_all_adapters, list_adapters, ADAPTE
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use st_core::config::{
-    daemon_log_path, daemon_pid_path, linked_paths, load_settings, normalize_server,
-    pause_flag_path, runtime_home, save_settings, settings_path, upsert_linked_project,
+    daemon_log_path, daemon_pid_path, link_project, linked_paths, load_settings, normalize_server,
+    pause_flag_path, runtime_home, save_settings, settings_path,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -56,6 +56,9 @@ pub enum HelperCmd {
         repo: Option<PathBuf>,
         #[arg(long)]
         project: Option<String>,
+        /// Fail if project id already exists (do not retarget / merge)
+        #[arg(long, default_value_t = false)]
+        create: bool,
     },
     /// Print settings path
     Config,
@@ -127,7 +130,8 @@ pub fn run(cli: HelperCli) -> Result<()> {
             }
             if let Some(repo) = repo {
                 let path = repo.canonicalize().unwrap_or(repo);
-                upsert_linked_project(&mut s, project.as_deref().unwrap_or(""), &path);
+                link_project(&mut s, project.as_deref().unwrap_or(""), &path, false)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
             }
             save_settings(&s)?;
             if s.token.is_empty() && linked_empty(&s) {
@@ -150,7 +154,11 @@ pub fn run(cli: HelperCli) -> Result<()> {
             run_daemon_once(&s, true)?;
             println!("sync requested");
         }
-        HelperCmd::Link { repo, project } => {
+        HelperCmd::Link {
+            repo,
+            project,
+            create,
+        } => {
             let mut s = load_settings()?;
             let path = repo
                 .or_else(|| {
@@ -162,9 +170,15 @@ pub fn run(cli: HelperCli) -> Result<()> {
                 })
                 .context("pass --repo PATH")?;
             let path = path.canonicalize().unwrap_or(path);
-            upsert_linked_project(&mut s, project.as_deref().unwrap_or(""), &path);
-            save_settings(&s)?;
-            println!("linked {}", path.display());
+            match link_project(&mut s, project.as_deref().unwrap_or(""), &path, create) {
+                Ok(()) => {
+                    save_settings(&s)?;
+                    println!("linked {} (id={})", path.display(), s.project);
+                }
+                Err(e) => {
+                    bail!("{e}");
+                }
+            }
         }
         HelperCmd::Config => {
             println!("{}", settings_path().display());

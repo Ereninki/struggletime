@@ -11,7 +11,10 @@ pub use agent_events::{
     classify_agent_event, drain_agent_events_jsonl, json_contains_forbidden_keys, AgentDrainStats,
     AgentEventDelta, FORBIDDEN_KEYS,
 };
-pub use config::{load_settings, normalize_server, save_settings, Settings, DEFAULT_SERVER};
+pub use config::{
+    link_project, load_settings, normalize_server, save_settings, LinkProjectError, Settings,
+    DEFAULT_SERVER,
+};
 pub use ledger::{Ledger, LedgerEntry};
 pub use privacy::anonymized_file_id;
 pub use verify::{

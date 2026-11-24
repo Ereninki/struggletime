@@ -181,27 +181,84 @@ fn shellexpand_home(p: &str) -> String {
     p.to_string()
 }
 
-pub fn upsert_linked_project(s: &mut Settings, project_id: &str, local_path: &Path) {
-    let path = local_path.to_string_lossy().to_string();
-    if let Some(row) = s
-        .projects
-        .iter_mut()
-        .find(|p| p.path == path || (!project_id.is_empty() && p.id == project_id))
-    {
-        if !project_id.is_empty() {
-            row.id = project_id.to_string();
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkProjectError {
+    /// Creating/linking would steal or merge into an existing project id at another path.
+    IdCollision {
+        id: String,
+        existing_path: String,
+        new_path: String,
+    },
+}
+
+impl std::fmt::Display for LinkProjectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IdCollision { id, .. } => write!(
+                f,
+                "project id '{id}' already exists (linked folder differs from the one you chose). \
+                 Pick a unique --project name, or unlink the old project first. \
+                 Refusing to silently merge hours across folders."
+            ),
         }
-        row.path = path.clone();
+    }
+}
+
+impl std::error::Error for LinkProjectError {}
+
+/// Link or create a local project folder.
+///
+/// * `create = true` — new project: fail with [`LinkProjectError::IdCollision`] if `project_id`
+///   already exists at a different path. Same path + same id is idempotent.
+/// * `create = false` — link: same rules for id collisions (never silently retarget an id).
+pub fn link_project(
+    s: &mut Settings,
+    project_id: &str,
+    local_path: &Path,
+    _create: bool,
+) -> Result<(), LinkProjectError> {
+    let path = local_path.to_string_lossy().to_string();
+    let id = if project_id.is_empty() {
+        local_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project")
+            .to_string()
+    } else {
+        project_id.to_string()
+    };
+
+    if let Some(existing) = s.projects.iter().find(|p| p.id == id) {
+        if existing.path != path {
+            return Err(LinkProjectError::IdCollision {
+                id: id.clone(),
+                existing_path: existing.path.clone(),
+                new_path: path,
+            });
+        }
+        s.repo = path;
+        s.project = id;
+        return Ok(());
+    }
+
+    if let Some(row) = s.projects.iter_mut().find(|p| p.path == path) {
+        // Same folder, new/changed id — rename local link (not a cross-folder merge).
+        row.id = id.clone();
     } else {
         s.projects.push(LinkedProject {
-            id: project_id.to_string(),
+            id: id.clone(),
             path: path.clone(),
         });
     }
     s.repo = path;
-    if !project_id.is_empty() {
-        s.project = project_id.to_string();
-    }
+    s.project = id;
+    let _ = _create;
+    Ok(())
+}
+
+/// Link mode (refuses cross-folder id collisions). Prefer [`link_project`] when you need the error.
+pub fn upsert_linked_project(s: &mut Settings, project_id: &str, local_path: &Path) {
+    let _ = link_project(s, project_id, local_path, false);
 }
 
 pub fn merge_json(base: &mut Value, patch: Value) {
@@ -209,5 +266,29 @@ pub fn merge_json(base: &mut Value, patch: Value) {
         for (k, v) in p {
             b.insert(k.clone(), v.clone());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn create_refuses_id_collision_across_folders() {
+        let mut s = Settings::default();
+        link_project(&mut s, "alpha", Path::new("/tmp/a"), true).unwrap();
+        let err = link_project(&mut s, "alpha", Path::new("/tmp/b"), true).unwrap_err();
+        assert!(matches!(err, LinkProjectError::IdCollision { .. }));
+        assert_eq!(s.projects.len(), 1);
+        assert_eq!(s.projects[0].path, "/tmp/a");
+    }
+
+    #[test]
+    fn same_folder_relink_is_idempotent() {
+        let mut s = Settings::default();
+        link_project(&mut s, "alpha", Path::new("/tmp/a"), true).unwrap();
+        link_project(&mut s, "alpha", Path::new("/tmp/a"), false).unwrap();
+        assert_eq!(s.projects.len(), 1);
     }
 }

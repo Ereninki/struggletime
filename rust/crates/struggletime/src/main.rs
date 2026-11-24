@@ -84,6 +84,9 @@ enum Cmd {
         repo: Option<PathBuf>,
         #[arg(long)]
         project: Option<String>,
+        /// Fail if project id already exists at another folder
+        #[arg(long, default_value_t = false)]
+        create: bool,
     },
     /// Print settings path
     Config,
@@ -148,8 +151,16 @@ fn main() -> Result<()> {
         Cmd::Sync => run_helper(HelperCli {
             cmd: HelperCmd::Sync,
         }),
-        Cmd::Link { repo, project } => run_helper(HelperCli {
-            cmd: HelperCmd::Link { repo, project },
+        Cmd::Link {
+            repo,
+            project,
+            create,
+        } => run_helper(HelperCli {
+            cmd: HelperCmd::Link {
+                repo,
+                project,
+                create,
+            },
         }),
         Cmd::Config => run_helper(HelperCli {
             cmd: HelperCmd::Config,

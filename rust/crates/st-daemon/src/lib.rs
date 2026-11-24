@@ -62,6 +62,9 @@ struct ProjectState {
     exec_failures: i64,
     active_secs: i64,
     idle_secs: i64,
+    /// Allowlisted editor label → count (from adapter heartbeats; never paths).
+    editors: HashMap<String, i64>,
+    agents: HashMap<String, i64>,
     last_activity: Instant,
     ledger: Ledger,
     ledger_path: PathBuf,
@@ -201,6 +204,8 @@ fn collect_projects(args: &DaemonArgs, settings: &Settings) -> Result<Vec<Projec
             exec_failures: 0,
             active_secs: 0,
             idle_secs: 0,
+            editors: HashMap::new(),
+            agents: HashMap::new(),
             last_activity: Instant::now(),
             ledger,
             ledger_path,
@@ -309,6 +314,9 @@ async fn seal_and_sync(p: &mut ProjectState, settings: &Settings) -> Result<()> 
     }
 
     let bucket_secs = (p.active_secs + p.idle_secs).max(1);
+    // Production (struggletime.screenseekr.com) requires counts + git objects on every bucket.
+    let editors = serde_json::Map::from_iter(p.editors.iter().map(|(k, v)| (k.clone(), json!(*v))));
+    let agents = serde_json::Map::from_iter(p.agents.iter().map(|(k, v)| (k.clone(), json!(*v))));
     let bucket = json!({
         "v": 1,
         "bucket_id": uuid::Uuid::new_v4().to_string(),
@@ -317,7 +325,7 @@ async fn seal_and_sync(p: &mut ProjectState, settings: &Settings) -> Result<()> 
         "bucket_start_wall": Utc::now().timestamp(),
         "bucket_secs": bucket_secs,
         "mono_delta_ms": bucket_secs * 1000,
-            "counts": {
+        "counts": {
             "human_edits": p.human_edits,
             "ai_writes": p.ai_writes,
             "active_secs": p.active_secs,
@@ -327,7 +335,10 @@ async fn seal_and_sync(p: &mut ProjectState, settings: &Settings) -> Result<()> 
             "exec_failures": p.exec_failures,
             "commits": 0,
         },
+        "git": {},
         "files": files,
+        "editors": editors,
+        "agents": agents,
         "formula_version": FORMULA_VERSION,
         "os": std::env::consts::OS,
     });
@@ -341,6 +352,8 @@ async fn seal_and_sync(p: &mut ProjectState, settings: &Settings) -> Result<()> 
     p.exec_failures = 0;
     p.active_secs = 0;
     p.idle_secs = 0;
+    p.editors.clear();
+    p.agents.clear();
 
     flush_pending(p, settings).await?;
     Ok(())
@@ -349,6 +362,10 @@ async fn seal_and_sync(p: &mut ProjectState, settings: &Settings) -> Result<()> 
 async fn flush_pending(p: &mut ProjectState, settings: &Settings) -> Result<()> {
     if p.ledger.pending.is_empty() {
         return Ok(());
+    }
+    if p.ledger.ensure_sync_shape() {
+        p.ledger.save(&p.ledger_path)?;
+        let _ = append_daemon_log("rewrote pending buckets with git={} for production sync");
     }
     let token = settings.token.trim();
     let server = settings.server.trim_end_matches('/');
@@ -388,6 +405,16 @@ async fn flush_pending(p: &mut ProjectState, settings: &Settings) -> Result<()> 
         }
     };
     let status = res.status();
+    let body = res.text().await.unwrap_or_default();
+    // Privacy: only surface server `error` / `accepted` fields — never bucket payloads.
+    let err_hint = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.as_str())
+                .map(|s| s.chars().take(160).collect::<String>())
+        })
+        .unwrap_or_default();
     if status.is_success() {
         let hashes: Vec<String> = p
             .ledger
@@ -402,12 +429,18 @@ async fn flush_pending(p: &mut ProjectState, settings: &Settings) -> Result<()> 
         let n = hashes.len();
         p.ledger.ack_pending(&hashes);
         p.ledger.save(&p.ledger_path)?;
-        tracing::info!(n, server = %server, "flushed buckets");
-        let _ = append_daemon_log(&format!("sync ok → {server} flushed={n}"));
+        tracing::info!(n, server = %server, %status, "flushed buckets");
+        let _ = append_daemon_log(&format!("sync ok → {server} HTTP {status} flushed={n}"));
     } else {
-        tracing::warn!(%status, server = %server, pending = pending_n, "batch upload rejected — keeping pending locally");
+        tracing::warn!(
+            %status,
+            server = %server,
+            pending = pending_n,
+            error = %err_hint,
+            "batch upload rejected — keeping pending locally"
+        );
         let _ = append_daemon_log(&format!(
-            "sync rejected HTTP {status} → {server}/v1/buckets/batch ({pending_n} pending kept local)"
+            "sync rejected HTTP {status} → {server}/v1/buckets/batch ({pending_n} pending) {err_hint}"
         ));
     }
     Ok(())
@@ -469,6 +502,12 @@ fn drain_agent_events(projects: &mut [ProjectState]) {
             p.prompts += d.prompts;
             p.executions += d.executions;
             p.exec_failures += d.exec_failures;
+            if let Some(ed) = d.editor.as_deref() {
+                *p.editors.entry(ed.to_string()).or_insert(0) += 1;
+            }
+            if let Some(ag) = d.agent.as_deref() {
+                *p.agents.entry(ag.to_string()).or_insert(0) += 1;
+            }
             touched.insert(idx);
         }
         if stats.activity_tick > 0 {

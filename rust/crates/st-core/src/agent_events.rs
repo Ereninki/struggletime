@@ -38,6 +38,9 @@ pub struct AgentEventDelta {
     pub executions: i64,
     pub exec_failures: i64,
     pub project_id: Option<String>,
+    /// Short allowlisted label only (e.g. cursor / vscode) — never a path.
+    pub editor: Option<String>,
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -85,9 +88,26 @@ pub fn classify_agent_event(v: &Value) -> Option<AgentEventDelta> {
         .and_then(|x| x.as_str())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
+    let label = |k: &str| -> Option<String> {
+        v.get(k).and_then(|x| x.as_str()).and_then(|s| {
+            let s = s.trim();
+            if s.is_empty()
+                || s.len() > 32
+                || s.contains('/')
+                || s.contains(' ')
+                || s.contains('\\')
+            {
+                None
+            } else {
+                Some(s.to_ascii_lowercase())
+            }
+        })
+    };
 
     let mut d = AgentEventDelta {
         project_id,
+        editor: label("editor"),
+        agent: label("agent"),
         ..Default::default()
     };
 
