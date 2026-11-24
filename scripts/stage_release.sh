@@ -45,7 +45,7 @@ Optional login autostart:
   powershell -ExecutionPolicy Bypass -File .\install.ps1 -Autostart
 
 Then:
-  struggletime              # tray
+  struggletime --tray        # tray (Start Menu shortcut already uses --tray)
   struggletime --version
   struggletime apikey <st_…>
   struggletime status
@@ -53,14 +53,17 @@ EOF
     ;;
   *macos*)
     cp "$BIN" "$OUT/struggletime"
-    chmod +x "$OUT/struggletime"
+    chmod 755 "$OUT/struggletime"
     sh "$ROOT/scripts/package_macos_app.sh" "$OUT/struggletime" "$OUT"
     cp "$ROOT/scripts/install.sh" "$OUT/install.sh"
-    chmod +x "$OUT/install.sh"
+    cp "$ROOT/scripts/macos_codesign_app.sh" "$OUT/macos_codesign_app.sh"
+    chmod +x "$OUT/install.sh" "$OUT/macos_codesign_app.sh"
     if [ -d "$ROOT/adapters" ]; then
       cp -a "$ROOT/adapters" "$OUT/adapters"
       mkdir -p "$OUT/StruggleTime.app/Contents/Resources"
       cp -a "$ROOT/adapters" "$OUT/StruggleTime.app/Contents/Resources/adapters"
+      # Re-sign after mutating Resources (invalidates prior signature).
+      sh "$ROOT/scripts/macos_codesign_app.sh" "$OUT/StruggleTime.app"
     fi
     if [ -d "$ROOT/daemon" ]; then
       mkdir -p "$OUT/daemon"
@@ -70,13 +73,16 @@ EOF
 StruggleTime for macOS
 ======================
 
-Option A — App + CLI installer:
+Option A — App + CLI installer (preferred):
   sh ./install.sh ./struggletime
 
-Copies StruggleTime.app to /Applications (or ~/Applications) and symlinks
-`struggletime` into ~/.local/bin (and /usr/local/bin when writable).
+Copies StruggleTime.app to /Applications (or ~/Applications), clears quarantine,
+ad-hoc code-signs the bundle (fixes RBSRequestErrorDomain / POSIX 162), and
+symlinks `struggletime` into ~/.local/bin (and /usr/local/bin when writable).
 
 Option B — manual:
+  xattr -cr StruggleTime.app
+  sh ./macos_codesign_app.sh StruggleTime.app
   open StruggleTime.app          # menu-bar tray (no Dock icon)
   sudo ln -sf "$(pwd)/StruggleTime.app/Contents/MacOS/struggletime" /usr/local/bin/struggletime
 
@@ -88,7 +94,7 @@ EOF
     ;;
   *linux*)
     cp "$BIN" "$OUT/struggletime"
-    chmod +x "$OUT/struggletime"
+    chmod 755 "$OUT/struggletime"
     cp "$ROOT/scripts/install.sh" "$OUT/install.sh"
     chmod +x "$OUT/install.sh"
     mkdir -p "$OUT/share/icons"
@@ -121,6 +127,9 @@ Terminal=false
 Categories=Development;Utility;
 StartupNotify=false
 EOF
+    if command -v desktop-file-validate >/dev/null 2>&1; then
+      desktop-file-validate "$OUT/struggletime.desktop" || true
+    fi
     cat > "$OUT/README.txt" <<'EOF'
 StruggleTime for Linux
 ======================
@@ -134,7 +143,8 @@ Installs:
 
 Release builds include the AppIndicator tray. Runtime libs: libxdo, GTK3, and
 libayatana-appindicator3 (or libappindicator). Without them, StruggleTime still
-runs a headless supervisor.
+runs a headless supervisor. With no DISPLAY/WAYLAND, `struggletime --tray`
+fails fast (use --headless for supervisor-only).
 
 Then:
   struggletime --tray       # tray

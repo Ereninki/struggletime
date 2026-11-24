@@ -65,6 +65,17 @@ jobs:
           sh scripts/stage_release.sh "${{ matrix.artifact }}" "$BIN" dist
           (
             cd dist
+            # macOS: verify bundle layout / signature before shipping (POSIX 162 guard).
+            if [ -d "${{ matrix.artifact }}/StruggleTime.app" ]; then
+              APP="${{ matrix.artifact }}/StruggleTime.app"
+              test -x "$APP/Contents/MacOS/struggletime"
+              test -f "$APP/Contents/Info.plist"
+              plutil -lint "$APP/Contents/Info.plist"
+              file "$APP/Contents/MacOS/struggletime"
+              lipo -info "$APP/Contents/MacOS/struggletime" || true
+              sh ../scripts/macos_codesign_app.sh "$APP"
+              codesign --verify --deep --strict --verbose=2 "$APP"
+            fi
             tar -czf "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}"
             shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
             # Also ship a ready-to-open .app zip on macOS arch builds
@@ -121,10 +132,16 @@ jobs:
           sh scripts/stage_release.sh struggletime-macos-universal /tmp/uni/struggletime dist
           (
             cd dist
+            APP=struggletime-macos-universal/StruggleTime.app
+            test -x "$APP/Contents/MacOS/struggletime"
+            plutil -lint "$APP/Contents/Info.plist"
+            lipo -info "$APP/Contents/MacOS/struggletime"
+            sh ../scripts/macos_codesign_app.sh "$APP"
+            codesign --verify --deep --strict --verbose=2 "$APP"
             tar -czf struggletime-macos-universal.tar.gz struggletime-macos-universal
             shasum -a 256 struggletime-macos-universal.tar.gz > struggletime-macos-universal.tar.gz.sha256
             ditto -c -k --sequesterRsrc --keepParent \
-              struggletime-macos-universal/StruggleTime.app \
+              "$APP" \
               struggletime-macos-universal-app.zip
             shasum -a 256 struggletime-macos-universal-app.zip > struggletime-macos-universal-app.zip.sha256
           )

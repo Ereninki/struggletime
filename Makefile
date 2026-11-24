@@ -1,6 +1,6 @@
 PORT ?= 18765
 
-.PHONY: help check test verify-adapters adversarial server daemon tray rust rust-linux rust-test binaries install install-binaries docs docs-dev package clean clippy
+.PHONY: help check test verify-adapters adversarial hourtrack server daemon tray rust rust-linux rust-test binaries install install-binaries docs docs-dev package clean clippy
 
 help:
 	@echo "make rust / binaries   build unified struggletime binary"
@@ -8,6 +8,7 @@ help:
 	@echo "make install           App + CLI (macOS/Linux via scripts/install.sh)"
 	@echo "make check             cargo test + adapter verify"
 	@echo "make adversarial       isolated subagent adversarial harness"
+	@echo "make hourtrack         multi-subagent hour-tracking verification"
 	@echo "make clippy            cargo clippy -D warnings"
 	@echo "make server            struggletime-server on :$(PORT) (separate binary)"
 	@echo "make daemon            struggletime daemon --repo=\$$REPO"
@@ -28,6 +29,10 @@ verify-adapters:
 
 adversarial: rust
 	bash scripts/adversarial_subagent_harness.sh
+
+hourtrack: rust
+	cd rust && cargo build --release -p st-server
+	bash scripts/hour_tracking_multi_subagent.sh
 
 rust binaries:
 	cd rust && cargo build --release -p struggletime

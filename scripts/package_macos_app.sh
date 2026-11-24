@@ -9,20 +9,21 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$OUT/StruggleTime.app"
 MACOS="$APP/Contents/MacOS"
 RES="$APP/Contents/Resources"
+SIGNER="$ROOT/scripts/macos_codesign_app.sh"
 # Prefer workspace Cargo.toml version; override with STRUGGLETIME_VERSION.
 APP_VERSION="${STRUGGLETIME_VERSION:-}"
 if [ -z "$APP_VERSION" ] && [ -f "$ROOT/rust/Cargo.toml" ]; then
   APP_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT/rust/Cargo.toml" | head -1)"
 fi
-APP_VERSION="${APP_VERSION:-0.1.4}"
+APP_VERSION="${APP_VERSION:-0.1.5}"
 
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RES"
-# Native Mach-O only — a shell wrapper makes macOS open Terminal.app.
-# Finder launches with no argv; LSEnvironment forces --tray so we never
+# Native Mach-O only — a shell wrapper makes macOS open Terminal.app / fail launchd.
+# Finder launches with no argv; LSEnvironment forces tray mode so we never
 # depend on TTY heuristics (SSH/CI must not auto-tray).
 cp "$BIN" "$MACOS/struggletime"
-chmod +x "$MACOS/struggletime"
+chmod 755 "$MACOS/struggletime"
 
 ICON_SRC="$ROOT/daemon/assets/struggletime.svg"
 ICNS_SRC="$ROOT/daemon/assets/AppIcon.icns"
@@ -76,7 +77,7 @@ fi
   <key>CFBundleExecutable</key>
   <string>struggletime</string>
   <key>CFBundleIdentifier</key>
-  <string>com.struggletime.app</string>
+  <string>com.derekified.struggletime</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -112,5 +113,11 @@ PLIST
 </plist>
 PLIST
 } > "$APP/Contents/Info.plist"
+
+printf 'APPL????' >"$APP/Contents/PkgInfo"
+
+if [ -x "$SIGNER" ] || [ -f "$SIGNER" ]; then
+  sh "$SIGNER" "$APP"
+fi
 
 echo "built $APP"

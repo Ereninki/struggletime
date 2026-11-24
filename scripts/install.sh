@@ -94,6 +94,24 @@ case "$OS" in
       cp -R "$APP_SRC" "$APP_DEST"
     fi
     [ "${USE_EXISTING:-0}" = "0" ] && rm -rf "${TMP:-}"
+    # Re-sign after copy — quarantine / broken signature → launchd POSIX 162.
+    SIGNER=""
+    if [ -f "$HERE/macos_codesign_app.sh" ]; then
+      SIGNER="$HERE/macos_codesign_app.sh"
+    elif [ -f "$ROOT/scripts/macos_codesign_app.sh" ]; then
+      SIGNER="$ROOT/scripts/macos_codesign_app.sh"
+    fi
+    if [ -n "$SIGNER" ]; then
+      sh "$SIGNER" "$APP_DEST"
+    else
+      chmod 755 "$APP_DEST/Contents/MacOS/struggletime"
+      if command -v xattr >/dev/null 2>&1; then
+        xattr -cr "$APP_DEST" 2>/dev/null || true
+      fi
+      if command -v codesign >/dev/null 2>&1; then
+        codesign --force --deep --sign - "$APP_DEST"
+      fi
+    fi
     ln -sf "$APP_DEST/Contents/MacOS/struggletime" "$BIN_DIR/struggletime"
     if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
       ln -sf "$APP_DEST/Contents/MacOS/struggletime" /usr/local/bin/struggletime
@@ -101,7 +119,7 @@ case "$OS" in
     fi
     echo "App: $APP_DEST"
     echo "CLI: $BIN_DIR/struggletime"
-    echo "Open StruggleTime from Applications, or run: struggletime"
+    echo "Open StruggleTime from Applications, or run: open -a $APP_DEST"
     ;;
   Linux)
     install -m 755 "$SRC" "$BIN_DIR/struggletime"
@@ -127,6 +145,9 @@ Terminal=false
 Categories=Development;Utility;
 StartupNotify=false
 EOF
+    if command -v desktop-file-validate >/dev/null 2>&1; then
+      desktop-file-validate "$APP_SUPPORT/struggletime.desktop" || true
+    fi
     if [ "${AUTOSTART_INSTALL:-1}" = "1" ]; then
       mkdir -p "$AUTOSTART"
       cp "$APP_SUPPORT/struggletime.desktop" "$AUTOSTART/struggletime.desktop"
@@ -139,6 +160,7 @@ EOF
       *) echo "add $BIN_DIR to PATH (export PATH=\"$BIN_DIR:\$PATH\")" ;;
     esac
     echo "try: struggletime --version && struggletime status"
+    echo "tray: struggletime --tray   (fails fast if DISPLAY/WAYLAND unset unless --headless)"
     ;;
   *)
     install -m 755 "$SRC" "$BIN_DIR/struggletime"
