@@ -109,12 +109,14 @@ pub fn normalize_server(url: &str) -> String {
     if u.is_empty() {
         return DEFAULT_SERVER.to_string();
     }
-    // Drop ephemeral tunnel hosts — same policy as the settings normalizer.
+    // Drop ephemeral / retired hosts — always prefer production.
     let lower = u.to_lowercase();
     if lower.contains("trycloudflare.com")
         || lower.contains("ngrok")
         || lower.contains("loca.lt")
         || lower.contains("cloudflared")
+        || lower.contains("sslip.io")
+        || lower.contains("62-83-116-143")
     {
         return DEFAULT_SERVER.to_string();
     }
@@ -290,5 +292,18 @@ mod tests {
         link_project(&mut s, "alpha", Path::new("/tmp/a"), true).unwrap();
         link_project(&mut s, "alpha", Path::new("/tmp/a"), false).unwrap();
         assert_eq!(s.projects.len(), 1);
+    }
+
+    #[test]
+    fn normalize_server_rewrites_retired_sslip_host() {
+        assert_eq!(
+            normalize_server("https://62-83-116-143.sslip.io"),
+            DEFAULT_SERVER
+        );
+        assert_eq!(
+            normalize_server("https://struggletime.screenseekr.com/"),
+            "https://struggletime.screenseekr.com"
+        );
+        assert_eq!(normalize_server(""), DEFAULT_SERVER);
     }
 }

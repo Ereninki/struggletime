@@ -359,6 +359,9 @@ async fn seal_and_sync(p: &mut ProjectState, settings: &Settings) -> Result<()> 
     Ok(())
 }
 
+/// Production `/v1/buckets/batch` rejects bodies with more than this many buckets.
+const MAX_BATCH_BUCKETS: usize = 40;
+
 async fn flush_pending(p: &mut ProjectState, settings: &Settings) -> Result<()> {
     if p.ledger.pending.is_empty() {
         return Ok(());
@@ -381,44 +384,67 @@ async fn flush_pending(p: &mut ProjectState, settings: &Settings) -> Result<()> 
         return Ok(());
     }
     let url = format!("{server}/v1/buckets/batch");
-    let body = json!({ "buckets": p.ledger.pending });
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
-    let res = match client
-        .post(&url)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            // Never log token or bucket bodies — host + error kind only.
-            tracing::warn!(server = %server, error = %e, pending = pending_n, "batch upload transport error — keeping pending");
+
+    // Chunk <= MAX_BATCH_BUCKETS and loop until the pending queue drains (or a chunk fails).
+    let mut total_flushed = 0usize;
+    while !p.ledger.pending.is_empty() {
+        let chunk: Vec<_> = p
+            .ledger
+            .pending
+            .iter()
+            .take(MAX_BATCH_BUCKETS)
+            .cloned()
+            .collect();
+        let chunk_n = chunk.len();
+        let body = json!({ "buckets": chunk });
+        let res = match client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(server = %server, error = %e, pending = p.ledger.pending.len(), "batch upload transport error — keeping pending");
+                let _ = append_daemon_log(&format!(
+                    "sync transport error → {server}/v1/buckets/batch ({} pending): {e}",
+                    p.ledger.pending.len()
+                ));
+                return Ok(());
+            }
+        };
+        let status = res.status();
+        let text = res.text().await.unwrap_or_default();
+        let err_hint = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| {
+                v.get("error")
+                    .and_then(|e| e.as_str())
+                    .map(|s| s.chars().take(160).collect::<String>())
+            })
+            .unwrap_or_default();
+        if !status.is_success() {
+            tracing::warn!(
+                %status,
+                server = %server,
+                pending = p.ledger.pending.len(),
+                chunk = chunk_n,
+                error = %err_hint,
+                "batch upload rejected — keeping pending locally"
+            );
             let _ = append_daemon_log(&format!(
-                "sync transport error → {server}/v1/buckets/batch ({pending_n} pending): {e}"
+                "sync rejected HTTP {status} → {server}/v1/buckets/batch (chunk={chunk_n}, {} pending) {err_hint}",
+                p.ledger.pending.len()
             ));
             return Ok(());
         }
-    };
-    let status = res.status();
-    let body = res.text().await.unwrap_or_default();
-    // Privacy: only surface server `error` / `accepted` fields — never bucket payloads.
-    let err_hint = serde_json::from_str::<serde_json::Value>(&body)
-        .ok()
-        .and_then(|v| {
-            v.get("error")
-                .and_then(|e| e.as_str())
-                .map(|s| s.chars().take(160).collect::<String>())
-        })
-        .unwrap_or_default();
-    if status.is_success() {
-        let hashes: Vec<String> = p
-            .ledger
-            .pending
+        let hashes: Vec<String> = chunk
             .iter()
             .filter_map(|b| {
                 b.get("hash")
@@ -429,20 +455,12 @@ async fn flush_pending(p: &mut ProjectState, settings: &Settings) -> Result<()> 
         let n = hashes.len();
         p.ledger.ack_pending(&hashes);
         p.ledger.save(&p.ledger_path)?;
-        tracing::info!(n, server = %server, %status, "flushed buckets");
-        let _ = append_daemon_log(&format!("sync ok → {server} HTTP {status} flushed={n}"));
-    } else {
-        tracing::warn!(
-            %status,
-            server = %server,
-            pending = pending_n,
-            error = %err_hint,
-            "batch upload rejected — keeping pending locally"
-        );
-        let _ = append_daemon_log(&format!(
-            "sync rejected HTTP {status} → {server}/v1/buckets/batch ({pending_n} pending) {err_hint}"
-        ));
+        total_flushed += n;
+        tracing::info!(n, remaining = p.ledger.pending.len(), server = %server, %status, "flushed bucket chunk");
     }
+    let _ = append_daemon_log(&format!(
+        "sync ok → {server} flushed={total_flushed} (chunks of <={MAX_BATCH_BUCKETS})"
+    ));
     Ok(())
 }
 
