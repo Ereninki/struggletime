@@ -1,5 +1,5 @@
 //! StruggleTime Layer-1 daemon library.
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::Utc;
 use clap::Parser;
 use serde_json::json;
@@ -351,22 +351,44 @@ async fn flush_pending(p: &mut ProjectState, settings: &Settings) -> Result<()> 
         return Ok(());
     }
     let token = settings.token.trim();
+    let server = settings.server.trim_end_matches('/');
+    let pending_n = p.ledger.pending.len();
     if token.is_empty() {
-        tracing::debug!("no API key — pending stays local");
+        tracing::warn!(
+            pending = pending_n,
+            "no API key — pending stays local (struggletime apikey <st_…>)"
+        );
+        let _ = append_daemon_log(&format!(
+            "sync skipped: no API key ({pending_n} pending) — run struggletime apikey <st_…>"
+        ));
         return Ok(());
     }
-    let url = format!("{}/v1/buckets/batch", settings.server.trim_end_matches('/'));
+    let url = format!("{server}/v1/buckets/batch");
     let body = json!({ "buckets": p.ledger.pending });
-    let client = reqwest::Client::new();
-    let res = client
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    let res = match client
         .post(&url)
         .header("Authorization", format!("Bearer {token}"))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
         .await
-        .context("POST /v1/buckets/batch")?;
-    if res.status().is_success() {
+    {
+        Ok(r) => r,
+        Err(e) => {
+            // Never log token or bucket bodies — host + error kind only.
+            tracing::warn!(server = %server, error = %e, pending = pending_n, "batch upload transport error — keeping pending");
+            let _ = append_daemon_log(&format!(
+                "sync transport error → {server}/v1/buckets/batch ({pending_n} pending): {e}"
+            ));
+            return Ok(());
+        }
+    };
+    let status = res.status();
+    if status.is_success() {
         let hashes: Vec<String> = p
             .ledger
             .pending
@@ -377,12 +399,16 @@ async fn flush_pending(p: &mut ProjectState, settings: &Settings) -> Result<()> 
                     .map(|s| s.to_string())
             })
             .collect();
+        let n = hashes.len();
         p.ledger.ack_pending(&hashes);
         p.ledger.save(&p.ledger_path)?;
-        tracing::info!(n = hashes.len(), "flushed buckets");
+        tracing::info!(n, server = %server, "flushed buckets");
+        let _ = append_daemon_log(&format!("sync ok → {server} flushed={n}"));
     } else {
-        let status = res.status();
-        tracing::warn!(%status, "batch upload rejected — keeping pending locally");
+        tracing::warn!(%status, server = %server, pending = pending_n, "batch upload rejected — keeping pending locally");
+        let _ = append_daemon_log(&format!(
+            "sync rejected HTTP {status} → {server}/v1/buckets/batch ({pending_n} pending kept local)"
+        ));
     }
     Ok(())
 }
@@ -407,6 +433,23 @@ fn drain_agent_events(projects: &mut [ProjectState]) {
             continue;
         }
         let (deltas, stats) = st_core::drain_agent_events_jsonl(&raw);
+        if stats.lines > 0 {
+            let _ = append_daemon_log(&format!(
+                "adapter drain {name}: lines={} accepted={} dup={} forbidden={} malformed={} activity_tick={}",
+                stats.lines,
+                stats.accepted,
+                stats.rejected_dup,
+                stats.rejected_forbidden,
+                stats.rejected_malformed,
+                stats.activity_tick
+            ));
+            tracing::info!(
+                file = name,
+                lines = stats.lines,
+                accepted = stats.accepted,
+                "drained adapter events"
+            );
+        }
         if stats.rejected_forbidden > 0 {
             tracing::debug!(
                 rejected = stats.rejected_forbidden,

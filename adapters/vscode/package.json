@@ -1,8 +1,8 @@
 {
   "name": "struggletime",
   "displayName": "StruggleTime",
-  "description": "Layer-2 enrichment for StruggleTime — optional; Layer-1 works without it.",
-  "version": "0.4.0",
+  "description": "Layer-2 enrichment for StruggleTime — optional; Layer-1 works without it. Writes allowlisted heartbeats for the local daemon to sync to https://struggletime.screenseekr.com.",
+  "version": "0.4.1",
   "publisher": "struggletime",
   "license": "AGPL-3.0-or-later",
   "engines": { "vscode": "^1.80.0" },
@@ -12,6 +12,21 @@
   "contributes": {
     "commands": [
       { "command": "struggletime.status", "title": "StruggleTime: Status" }
-    ]
+    ],
+    "configuration": {
+      "title": "StruggleTime",
+      "properties": {
+        "struggletime.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log allowlisted emit counts to the StruggleTime Output channel (never paths, prompts, or API keys)."
+        },
+        "struggletime.eventsPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional override for agent_events.jsonl (default: ~/.aitime/agent_events.jsonl or $STRUGGLETIME_HOME)."
+        }
+      }
+    }
   }
 }

@@ -92,7 +92,9 @@ pub fn classify_agent_event(v: &Value) -> Option<AgentEventDelta> {
     };
 
     match et {
-        "edit" | "save" | "modified" | "created" | "focus" => d.human_edits += 1,
+        "edit" | "save" | "modified" | "created" | "focus" | "heartbeat" | "deleted" | "blur" => {
+            d.human_edits += 1
+        }
         "tool" | "start" | "stop" => {
             d.ai_writes += 1;
             if et == "tool" || cat == "ai_cli" {
@@ -196,6 +198,20 @@ mod tests {
         assert_eq!(d.ai_writes, 1);
         assert_eq!(d.executions, 1);
         assert_eq!(d.project_id.as_deref(), Some("proj-a"));
+    }
+
+    #[test]
+    fn accepts_cursor_heartbeat() {
+        let v = json!({
+            "event_type": "heartbeat",
+            "category": "editor",
+            "editor": "cursor",
+            "agent": "human",
+            "files_touched_count": 0,
+            "source": "adapter"
+        });
+        let d = classify_agent_event(&v).expect("ok");
+        assert_eq!(d.human_edits, 1);
     }
 
     #[test]

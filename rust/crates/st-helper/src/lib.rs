@@ -6,8 +6,8 @@ pub use adapters::{install_adapters, install_all_adapters, list_adapters, ADAPTE
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use st_core::config::{
-    daemon_log_path, daemon_pid_path, load_settings, normalize_server, pause_flag_path,
-    runtime_home, save_settings, settings_path, upsert_linked_project,
+    daemon_log_path, daemon_pid_path, linked_paths, load_settings, normalize_server,
+    pause_flag_path, runtime_home, save_settings, settings_path, upsert_linked_project,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -414,6 +414,27 @@ fn print_status() -> Result<()> {
     let s = load_settings()?;
     let running = daemon_alive();
     let paused = pause_flag_path().exists();
+    let events = runtime_home().join("agent_events.jsonl");
+    let (ev_lines, ev_bytes) = match fs::read_to_string(&events) {
+        Ok(raw) => (
+            raw.lines().filter(|l| !l.trim().is_empty()).count(),
+            raw.len(),
+        ),
+        Err(_) => (0usize, 0usize),
+    };
+    let mut pending = 0usize;
+    for (_id, path) in linked_paths(&s) {
+        let ledger = path.join(".aitime-ledger.json");
+        if let Ok(raw) = fs::read_to_string(ledger) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                pending += v
+                    .get("pending")
+                    .and_then(|p| p.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+            }
+        }
+    }
     println!("server:  {}", normalize_server(&s.server));
     println!(
         "handle:  {}",
@@ -436,6 +457,19 @@ fn print_status() -> Result<()> {
         }
     );
     println!("paused:  {paused}");
+    println!(
+        "adapter: {} ({} lines, {} bytes queued)",
+        events.display(),
+        ev_lines,
+        ev_bytes
+    );
+    println!("pending uploads: {pending}");
+    if s.token.is_empty() && pending > 0 {
+        println!("hint:    set API key — struggletime apikey <st_…> then struggletime sync");
+    }
+    if !running {
+        println!("hint:    start daemon — struggletime start (or tray)");
+    }
     println!("projects:");
     if s.projects.is_empty() {
         if s.repo.is_empty() {

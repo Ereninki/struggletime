@@ -14,7 +14,12 @@ need() {
 }
 
 need adapters/vscode/extension.js
+need adapters/vscode/lib.js
 need adapters/vscode/package.json
+need adapters/vscode/test_emit.js
+
+echo "running vscode adapter unit checks…"
+node "$ROOT/adapters/vscode/test_emit.js"
 need adapters/claude-code/hooks.json
 need adapters/codex/wrap.sh
 need adapters/neovim/lua/struggletime/init.lua
@@ -86,8 +91,9 @@ EXEC="$STRUGGLETIME_HOME/exec.jsonl"
 emit() { printf '%s\n' "$1" >> "$EVENTS"; }
 emit_exec() { printf '%s\n' "$1" >> "$EXEC"; }
 
-# vscode / neovim / jetbrains / godot / unity — editor heartbeats
-emit '{"event_type":"edit","category":"editor","adapter":"vscode"}'
+# vscode / cursor / neovim / jetbrains / godot / unity — editor heartbeats
+emit '{"event_type":"edit","category":"editor","adapter":"vscode","editor":"cursor"}'
+emit '{"event_type":"heartbeat","category":"editor","adapter":"vscode","editor":"cursor","files_touched_count":0}'
 emit '{"event_type":"save","category":"editor","adapter":"neovim"}'
 emit '{"event_type":"focus","category":"editor","adapter":"jetbrains"}'
 emit '{"event_type":"edit","category":"editor","adapter":"godot"}'
@@ -180,6 +186,13 @@ UP=$(curl -sS -w "%{http_code}" -o "$BASE/up.json" -X POST "http://127.0.0.1:187
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$BODY")
 test "$UP" = "200"
 python3 -c "import json; j=json.load(open('$BASE/up.json')); assert j.get('ok') and j.get('accepted',0)>=1; print('ok  sqlite ingest accepted', j.get('accepted'))"
+
+# Safe connectivity probe to production host (no auth, no payloads).
+if curl -sf --max-time 8 "https://struggletime.screenseekr.com/health" >/dev/null; then
+  echo "ok  screenseekr.com /health reachable"
+else
+  echo "WARN screenseekr.com /health unreachable from this host (sync will keep pending locally)"
+fi
 
 if [ "$fail" -ne 0 ]; then
   exit 1

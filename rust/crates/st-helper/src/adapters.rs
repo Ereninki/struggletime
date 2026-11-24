@@ -174,11 +174,33 @@ fn adapter_source_present(root: &Path, name: &str) -> bool {
     root.join(name).is_dir()
 }
 
+const VSCODE_EXT_ID: &str = "struggletime.struggletime";
+const VSCODE_EXT_VERSION: &str = "0.4.1";
+
+fn vscode_ext_dir_name() -> String {
+    format!("{VSCODE_EXT_ID}-{VSCODE_EXT_VERSION}")
+}
+
 fn installed_hint(name: &str) -> bool {
     match name {
         "vscode" => vscode_extension_dirs().into_iter().any(|d| {
-            d.join("struggletime.struggletime-0.4.0").is_dir()
-                || d.join("struggletime.struggletime").is_dir()
+            if !d.is_dir() {
+                return false;
+            }
+            if d.join(vscode_ext_dir_name()).is_dir() || d.join(VSCODE_EXT_ID).is_dir() {
+                return true;
+            }
+            // Any prior struggletime.struggletime-* install counts.
+            fs::read_dir(&d)
+                .ok()
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .starts_with(&format!("{VSCODE_EXT_ID}-"))
+                })
         }),
         "neovim" => {
             let pack = neovim_pack_dir();
@@ -351,21 +373,29 @@ fn install_vscode(root: &Path) -> Result<String> {
             continue;
         }
         fs::create_dir_all(&dir)?;
-        let dest = dir.join("struggletime.struggletime-0.4.0");
-        let _ = fs::remove_dir_all(&dest);
+        // Drop older StruggleTime extension folders so Cursor loads 0.4.1.
+        if let Ok(rd) = fs::read_dir(&dir) {
+            for ent in rd.flatten() {
+                let name = ent.file_name().to_string_lossy().to_string();
+                if name == VSCODE_EXT_ID || name.starts_with(&format!("{VSCODE_EXT_ID}-")) {
+                    let _ = fs::remove_dir_all(ent.path());
+                }
+            }
+        }
+        let dest = dir.join(vscode_ext_dir_name());
         copy_dir_recursive(&src, &dest)?;
         installed.push(dest.display().to_string());
     }
     if installed.is_empty() {
         let fallback = home_dir().join(".vscode").join("extensions");
         fs::create_dir_all(&fallback)?;
-        let dest = fallback.join("struggletime.struggletime-0.4.0");
+        let dest = fallback.join(vscode_ext_dir_name());
         let _ = fs::remove_dir_all(&dest);
         copy_dir_recursive(&src, &dest)?;
         installed.push(dest.display().to_string());
     }
     Ok(format!(
-        "VS Code family extension → {} (reload window)",
+        "VS Code / Cursor extension {VSCODE_EXT_VERSION} → {} (Developer: Reload Window)",
         installed.join(", ")
     ))
 }
