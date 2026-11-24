@@ -3,10 +3,10 @@
 //! The HTTP API / dashboard ships separately as `struggletime-server`
 //! (`st-server`) so the app stays light.
 //!
-//! Dual entrypoint:
-//! - `--tray` / desktop (no TTY) → system tray
-//! - Interactive terminal with no args → `status` (then exit)
-//! - Terminal with a subcommand → normal stdout/stderr CLI
+//! Modes (never ambiguous):
+//! - Explicit CLI subcommands → foreground CLI (never tray, never re-exec tray)
+//! - `--tray` / `tray` → tray (single-instance; optional one-shot detach from a TTY)
+//! - No args → `status` (SSH / CI / headless never auto-start tray)
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use anyhow::{bail, Context, Result};
@@ -20,6 +20,11 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+/// Child tray / CLI helpers must set this so they never re-spawn another tray.
+const ENV_NO_RESPAWN: &str = "STRUGGLETIME_NO_RESPAWN";
+/// Internal tray child after a one-shot detach from an interactive shell.
+const ENV_INTERNAL_TRAY: &str = "STRUGGLETIME_INTERNAL_TRAY";
+
 #[derive(Parser, Debug)]
 #[command(
     name = "struggletime",
@@ -27,7 +32,7 @@ use std::process::{Command, Stdio};
     version
 )]
 struct Cli {
-    /// Start the desktop tray (same as double-clicking the app)
+    /// Start the desktop tray (menu bar / notification area)
     #[arg(long)]
     tray: bool,
 
@@ -103,28 +108,11 @@ fn main() -> Result<()> {
     win_console::attach_if_cli();
 
     let cli = Cli::parse();
-    let cmd = if cli.tray {
-        Cmd::Tray(TrayArgs::default())
-    } else if let Some(cmd) = cli.cmd {
-        cmd
-    } else if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        // Double-click / GUI launch / piped invoke with no subcommand → tray.
-        Cmd::Tray(TrayArgs::default())
-    } else {
-        // Interactive terminal with no args → status (do not block in the tray loop).
-        Cmd::Status
-    };
+    let cmd = resolve_cmd(cli);
 
     match cmd {
         Cmd::Daemon(args) => run_daemon(args),
-        Cmd::Tray(args) => {
-            // From an interactive terminal, detach so the shell stays usable
-            // (otherwise `struggletime --tray` looks hung / opens a stuck window).
-            if should_detach_tray(&args) {
-                return spawn_detached_tray(&args);
-            }
-            run_tray(args)
-        }
+        Cmd::Tray(args) => run_tray_mode(args),
         Cmd::Verify { ledger } => verify_ledger(ledger),
         Cmd::Apikey { key } => run_helper(HelperCli {
             cmd: HelperCmd::Apikey { key },
@@ -178,14 +166,50 @@ fn main() -> Result<()> {
     }
 }
 
+fn resolve_cmd(cli: Cli) -> Cmd {
+    if cli.tray {
+        return Cmd::Tray(TrayArgs::default());
+    }
+    if let Some(cmd) = cli.cmd {
+        return cmd;
+    }
+    // macOS .app sets LSEnvironment STRUGGLETIME_APP_BUNDLE=1 (no argv from Finder).
+    if std::env::var_os("STRUGGLETIME_APP_BUNDLE").is_some()
+        && std::env::var_os(ENV_NO_RESPAWN).is_none()
+    {
+        return Cmd::Tray(TrayArgs::default());
+    }
+    // No subcommand: status. Desktop .desktop / Start Menu / LaunchAgent must
+    // pass --tray explicitly so SSH / CI / headless never enter the tray loop.
+    Cmd::Status
+}
+
+fn run_tray_mode(args: TrayArgs) -> Result<()> {
+    if std::env::var_os(ENV_NO_RESPAWN).is_some() && std::env::var_os(ENV_INTERNAL_TRAY).is_none() {
+        bail!(
+            "refusing to start tray under {ENV_NO_RESPAWN}=1 \
+             (CLI helper/daemon path must not launch the tray)"
+        );
+    }
+    // One-shot detach from an interactive TTY so the shell returns immediately.
+    // The child is marked INTERNAL_TRAY and never detaches again.
+    if should_detach_tray(&args) {
+        return spawn_detached_tray(&args);
+    }
+    run_tray(args)
+}
+
 fn should_detach_tray(args: &TrayArgs) -> bool {
     if args.headless {
         return false;
     }
-    if std::env::var_os("STRUGGLETIME_TRAY_FOREGROUND").is_some() {
+    if std::env::var_os(ENV_INTERNAL_TRAY).is_some() {
         return false;
     }
-    // Already a background/GUI launch (Finder, Start Menu, LaunchAgent).
+    if std::env::var_os(ENV_NO_RESPAWN).is_some() {
+        return false;
+    }
+    // Already a GUI / LaunchAgent style launch (no TTY).
     if !std::io::stdin().is_terminal() && !std::io::stdout().is_terminal() {
         return false;
     }
@@ -202,7 +226,8 @@ fn spawn_detached_tray(args: &TrayArgs) -> Result<()> {
     if args.interval != 15 {
         cmd.arg("--interval").arg(args.interval.to_string());
     }
-    cmd.env("STRUGGLETIME_TRAY_FOREGROUND", "1");
+    cmd.env(ENV_INTERNAL_TRAY, "1");
+    cmd.env(ENV_NO_RESPAWN, "1");
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -211,7 +236,6 @@ fn spawn_detached_tray(args: &TrayArgs) -> Result<()> {
         use std::os::unix::process::CommandExt;
         unsafe {
             cmd.pre_exec(|| {
-                // New session so closing the terminal does not kill the tray.
                 if libc::setsid() == -1 {
                     return Err(std::io::Error::last_os_error());
                 }
@@ -270,7 +294,8 @@ mod win_console {
 
     fn wants_gui_tray(args: &[String]) -> bool {
         if args.is_empty() {
-            return true;
+            // No-args is status now; attach console for CLI output.
+            return false;
         }
         if args
             .iter()
@@ -278,11 +303,10 @@ mod win_console {
         {
             return false;
         }
-        if args == ["--tray"] {
-            return true;
+        if args.iter().any(|a| a == "--tray") {
+            return !args.iter().any(|a| a == "--headless");
         }
         if args.first().map(String::as_str) == Some("tray") {
-            // Graphical tray only; --headless prints to a console.
             return !args.iter().any(|a| a == "--headless");
         }
         false

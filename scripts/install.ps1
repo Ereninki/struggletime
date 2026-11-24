@@ -75,7 +75,7 @@ $lnkPath = Join-Path $programs "StruggleTime.lnk"
 $w = New-Object -ComObject WScript.Shell
 $sc = $w.CreateShortcut($lnkPath)
 $sc.TargetPath = $Exe
-$sc.Arguments = ""
+$sc.Arguments = "--tray"
 $sc.WorkingDirectory = $Dest
 $sc.WindowStyle = 7
 $sc.Description = "StruggleTime tray"
@@ -88,7 +88,7 @@ if ($Autostart) {
   $auto = Join-Path $startup "StruggleTime.lnk"
   $sc2 = $w.CreateShortcut($auto)
   $sc2.TargetPath = $Exe
-  $sc2.Arguments = ""
+  $sc2.Arguments = "--tray"
   $sc2.WorkingDirectory = $Dest
   $sc2.WindowStyle = 7
   $sc2.Description = "StruggleTime tray (login)"

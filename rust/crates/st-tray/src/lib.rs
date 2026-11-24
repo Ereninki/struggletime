@@ -49,10 +49,23 @@ struct TrayState {
 
 pub fn run(args: TrayArgs) -> Result<()> {
     fs::create_dir_all(runtime_home())?;
+    let _lock = match acquire_tray_lock() {
+        Ok(lock) => lock,
+        Err(e) => {
+            eprintln!("StruggleTime tray already running ({e})");
+            return Ok(());
+        }
+    };
     let state = Arc::new(Mutex::new(TrayState::default()));
     ensure_daemon_if_configured()?;
 
     if !args.headless {
+        if !display_available() {
+            anyhow::bail!(
+                "no graphical display (DISPLAY/WAYLAND_DISPLAY unset); \
+                 refusing to start tray (pass --headless for supervisor-only mode)"
+            );
+        }
         #[cfg(any(
             target_os = "macos",
             target_os = "windows",
@@ -61,7 +74,11 @@ pub fn run(args: TrayArgs) -> Result<()> {
         {
             match native::run_native_tray(args.interval.max(5), Arc::clone(&state)) {
                 Ok(()) => return Ok(()),
-                Err(e) => eprintln!("graphical tray unavailable ({e}); using headless supervisor"),
+                Err(e) => {
+                    eprintln!(
+                        "graphical tray unavailable ({e}); using headless supervisor (no retry loop)"
+                    );
+                }
             }
         }
         #[cfg(not(any(
@@ -74,6 +91,64 @@ pub fn run(args: TrayArgs) -> Result<()> {
         }
     }
     run_headless(args.interval.max(5), state)
+}
+
+fn tray_lock_path() -> PathBuf {
+    runtime_home().join("tray.lock")
+}
+
+struct TrayLock {
+    path: PathBuf,
+    #[cfg(unix)]
+    _file: fs::File,
+}
+
+impl Drop for TrayLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn acquire_tray_lock() -> Result<TrayLock> {
+    let path = tray_lock_path();
+    if let Ok(raw) = fs::read_to_string(&path) {
+        if let Ok(pid) = raw.trim().parse::<u32>() {
+            if process_alive(pid) {
+                anyhow::bail!("pid {pid} holds {}", path.display());
+            }
+        }
+        let _ = fs::remove_file(&path);
+    }
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o644)
+            .open(&path)
+            .map_err(|e| anyhow::anyhow!("tray lock {}: {e}", path.display()))?;
+        writeln!(file, "{}", std::process::id())?;
+        file.sync_all()?;
+        Ok(TrayLock { path, _file: file })
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(&path, format!("{}", std::process::id()))?;
+        Ok(TrayLock { path })
+    }
+}
+
+fn display_available() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
 }
 
 fn run_headless(interval: u64, state: Arc<Mutex<TrayState>>) -> Result<()> {
@@ -172,7 +247,10 @@ fn ensure_daemon_if_configured() -> Result<()> {
 
 fn run_cli(args: &[&str]) {
     let bin = cli_bin();
-    match Command::new(&bin).args(args).status() {
+    // Never let helper/daemon child paths re-enter tray mode.
+    let mut cmd = Command::new(&bin);
+    cmd.args(args).env("STRUGGLETIME_NO_RESPAWN", "1");
+    match cmd.status() {
         Ok(st) if st.success() => {}
         Ok(st) => eprintln!("{} {:?} -> {st}", bin.display(), args),
         Err(e) => eprintln!("failed {} {:?}: {e}", bin.display(), args),

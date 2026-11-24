@@ -115,7 +115,7 @@ EOF
 Type=Application
 Name=StruggleTime
 Comment=Track struggle-weighted coding time
-Exec=struggletime
+Exec=struggletime --tray
 Icon=struggletime
 Terminal=false
 Categories=Development;Utility;
@@ -137,7 +137,7 @@ libayatana-appindicator3 (or libappindicator). Without them, StruggleTime still
 runs a headless supervisor.
 
 Then:
-  struggletime              # tray
+  struggletime --tray       # tray
   struggletime --version
   struggletime apikey <st_…>
   struggletime status

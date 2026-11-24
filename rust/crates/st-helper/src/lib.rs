@@ -258,6 +258,8 @@ fn daemon_cmd(bin: &PathBuf) -> Command {
     if name == "struggletime" || name == "struggletime.exe" {
         cmd.arg("daemon");
     }
+    // Daemon must never bubble into tray / re-exec loops.
+    cmd.env("STRUGGLETIME_NO_RESPAWN", "1");
     cmd
 }
 

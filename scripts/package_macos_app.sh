@@ -19,6 +19,8 @@ APP_VERSION="${APP_VERSION:-0.1.4}"
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RES"
 # Native Mach-O only — a shell wrapper makes macOS open Terminal.app.
+# Finder launches with no argv; LSEnvironment forces --tray so we never
+# depend on TTY heuristics (SSH/CI must not auto-tray).
 cp "$BIN" "$MACOS/struggletime"
 chmod +x "$MACOS/struggletime"
 
@@ -93,6 +95,11 @@ fi
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>LSEnvironment</key>
+  <dict>
+    <key>STRUGGLETIME_APP_BUNDLE</key>
+    <string>1</string>
+  </dict>
 PLIST
   if [ -f "$RES/AppIcon.icns" ]; then
     cat <<'PLIST'

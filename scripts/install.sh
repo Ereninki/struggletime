@@ -121,7 +121,7 @@ case "$OS" in
 Type=Application
 Name=StruggleTime
 Comment=Track struggle-weighted coding time
-Exec=$BIN_DIR/struggletime
+Exec=$BIN_DIR/struggletime --tray
 Icon=struggletime
 Terminal=false
 Categories=Development;Utility;

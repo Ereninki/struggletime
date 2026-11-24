@@ -1,13 +1,17 @@
 //! StruggleTime HTTP API + static dashboard (Native HTTP API + static dashboard).
+mod metrics;
+
 use anyhow::{Context, Result};
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, Request, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use clap::Parser;
+use metrics::{Metrics, SqliteTimer};
 use rusqlite::{params, Connection};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -18,6 +22,7 @@ use st_core::verify::{
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Parser, Debug)]
@@ -38,6 +43,7 @@ pub struct ServerArgs {
 struct AppState {
     db: Arc<Mutex<Connection>>,
     static_dir: PathBuf,
+    metrics: Arc<Metrics>,
 }
 
 pub fn run(args: ServerArgs) -> Result<()> {
@@ -51,28 +57,71 @@ pub fn run(args: ServerArgs) -> Result<()> {
 }
 
 async fn run_async(args: ServerArgs) -> Result<()> {
-    let static_dir = args.static_dir.unwrap_or_else(|| {
-        let candidates = [
-            PathBuf::from("server/static"),
-            PathBuf::from("../server/static"),
-            PathBuf::from("../../server/static"),
-        ];
-        candidates
-            .into_iter()
-            .find(|p| p.join("index.html").exists())
-            .unwrap_or_else(|| PathBuf::from("server/static"))
-    });
+    let static_dir = args.static_dir.unwrap_or_else(default_static_dir);
+    let state = open_state(&args.db, static_dir.clone())?;
+    spawn_timing_logger(Arc::clone(&state.metrics));
+    let app = build_router(state);
+    let addr: SocketAddr = format!("{}:{}", args.bind, args.port).parse()?;
+    tracing::info!(%addr, statics = %static_dir.display(), "struggletime-server listening");
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
 
-    let conn =
-        Connection::open(&args.db).with_context(|| format!("open db {}", args.db.display()))?;
+fn default_static_dir() -> PathBuf {
+    let candidates = [
+        PathBuf::from("server/static"),
+        PathBuf::from("../server/static"),
+        PathBuf::from("../../server/static"),
+    ];
+    candidates
+        .into_iter()
+        .find(|p| p.join("index.html").exists())
+        .unwrap_or_else(|| PathBuf::from("server/static"))
+}
+
+fn open_state(db: &PathBuf, static_dir: PathBuf) -> Result<AppState> {
+    let conn = Connection::open(db).with_context(|| format!("open db {}", db.display()))?;
     init_db(&conn)?;
-    let state = AppState {
+    Ok(AppState {
         db: Arc::new(Mutex::new(conn)),
-        static_dir: static_dir.clone(),
-    };
+        static_dir,
+        metrics: Arc::new(Metrics::default()),
+    })
+}
 
+fn spawn_timing_logger(metrics: Arc<Metrics>) {
+    tokio::spawn(async move {
+        let mut iv = tokio::time::interval(std::time::Duration::from_secs(10));
+        loop {
+            iv.tick().await;
+            let s = metrics.snapshot();
+            if s.requests == 0 {
+                continue;
+            }
+            // No paths / payloads — aggregate timings only.
+            tracing::info!(
+                requests = s.requests,
+                errors = s.errors,
+                req_per_sec = format!("{:.1}", s.req_per_sec),
+                buckets_per_sec = format!("{:.1}", s.buckets_per_sec),
+                batches = s.batches,
+                p50_ms = format!("{:.2}", s.p50_ms),
+                p95_ms = format!("{:.2}", s.p95_ms),
+                p99_ms = format!("{:.2}", s.p99_ms),
+                max_ms = format!("{:.2}", s.max_ms),
+                sqlite_ops = s.sqlite_ops,
+                sqlite_avg_lock_wait_ms = format!("{:.3}", s.sqlite_avg_lock_wait_ms),
+                "timing"
+            );
+        }
+    });
+}
+
+fn build_router(state: AppState) -> Router {
     let api = Router::new()
         .route("/health", get(health))
+        .route("/v1/metrics", get(metrics_endpoint))
         .route("/v1/auth/me", get(auth_me))
         .route("/v1/keys", post(create_key))
         .route("/v1/buckets/batch", post(buckets_batch))
@@ -80,8 +129,8 @@ async fn run_async(args: ServerArgs) -> Result<()> {
         .route("/v1/me/overview", get(overview))
         .with_state(state.clone());
 
-    let index = static_dir.join("index.html");
-    let app = Router::new()
+    let static_dir = state.static_dir.clone();
+    Router::new()
         .merge(api)
         .nest_service(
             "/docs",
@@ -91,19 +140,35 @@ async fn run_async(args: ServerArgs) -> Result<()> {
         .route_service("/styles.css", ServeFile::new(static_dir.join("styles.css")))
         .route_service("/ui.js", ServeFile::new(static_dir.join("ui.js")))
         .nest_service("/img", ServeDir::new(static_dir.join("img")))
-        .fallback(get(spa_fallback).with_state(state));
+        .fallback(get(spa_fallback).with_state(state.clone()))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            timing_middleware,
+        ))
+}
 
-    let addr: SocketAddr = format!("{}:{}", args.bind, args.port).parse()?;
-    tracing::info!(%addr, statics = %static_dir.display(), "struggletime-server listening");
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
-    let _ = index;
-    Ok(())
+/// Bind an ephemeral port with an isolated SQLite DB (for load tests).
+pub async fn serve_temp(db: PathBuf) -> Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
+    let state = open_state(&db, default_static_dir())?;
+    spawn_timing_logger(Arc::clone(&state.metrics));
+    let app = build_router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    Ok((addr, handle))
 }
 
 fn init_db(conn: &Connection) -> Result<()> {
+    // Concurrent ingest: WAL + busy timeout so 1k clients don't fail with SQLITE_BUSY.
     conn.execute_batch(
         r#"
+        PRAGMA journal_mode=WAL;
+        PRAGMA synchronous=NORMAL;
+        PRAGMA busy_timeout=5000;
+        PRAGMA temp_store=MEMORY;
+        PRAGMA foreign_keys=ON;
         CREATE TABLE IF NOT EXISTS users (
           id TEXT PRIMARY KEY,
           handle TEXT UNIQUE NOT NULL,
@@ -125,9 +190,49 @@ fn init_db(conn: &Connection) -> Result<()> {
           state TEXT NOT NULL,
           created_at INTEGER NOT NULL
         );
+        CREATE INDEX IF NOT EXISTS idx_buckets_user ON buckets(user_id);
         "#,
     )?;
     Ok(())
+}
+
+async fn timing_middleware(
+    State(state): State<AppState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    let route = req.uri().path().to_string();
+    let start = Instant::now();
+    let res = next.run(req).await;
+    let status = res.status().as_u16();
+    let latency_ns = start.elapsed().as_nanos() as u64;
+    state.metrics.record_request(latency_ns, status);
+    tracing::debug!(
+        route = %route,
+        status,
+        latency_ms = format!("{:.2}", latency_ns as f64 / 1_000_000.0),
+        "http"
+    );
+    res
+}
+
+async fn metrics_endpoint(State(state): State<AppState>) -> Json<Value> {
+    let s = state.metrics.snapshot();
+    Json(json!({
+        "requests": s.requests,
+        "errors": s.errors,
+        "req_per_sec": (s.req_per_sec * 10.0).round() / 10.0,
+        "buckets_per_sec": (s.buckets_per_sec * 10.0).round() / 10.0,
+        "batches": s.batches,
+        "buckets_accepted": s.buckets_accepted,
+        "p50_ms": (s.p50_ms * 1000.0).round() / 1000.0,
+        "p95_ms": (s.p95_ms * 1000.0).round() / 1000.0,
+        "p99_ms": (s.p99_ms * 1000.0).round() / 1000.0,
+        "max_ms": (s.max_ms * 1000.0).round() / 1000.0,
+        "sqlite_ops": s.sqlite_ops,
+        "sqlite_avg_lock_wait_ms": (s.sqlite_avg_lock_wait_ms * 1000.0).round() / 1000.0,
+        "elapsed_s": (s.elapsed_s * 1000.0).round() / 1000.0,
+    }))
 }
 
 async fn health() -> Json<Value> {
@@ -177,6 +282,7 @@ fn user_from_auth(
         ));
     }
     let th = hash_token(token);
+    let _sqlite = SqliteTimer::start(&state.metrics);
     let db = state.db.lock().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -233,6 +339,7 @@ async fn create_key(
     };
     let th = hash_token(&token);
     let now = Utc::now().timestamp();
+    let _sqlite = SqliteTimer::start(&state.metrics);
     let db = state.db.lock().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -306,6 +413,7 @@ async fn buckets_batch(
         tracing::debug!(?chain_errs, "chain warnings");
     }
     let seq = weight_sequence(&body.buckets, 0);
+    let _sqlite = SqliteTimer::start(&state.metrics);
     let db = state.db.lock().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -329,6 +437,7 @@ async fn buckets_batch(
         );
         accepted += 1;
     }
+    state.metrics.record_batch(accepted);
     Ok(Json(json!({"ok": true, "accepted": accepted})))
 }
 
@@ -336,6 +445,7 @@ async fn user_public(
     State(state): State<AppState>,
     Path(handle): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let _sqlite = SqliteTimer::start(&state.metrics);
     let db = state.db.lock().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -368,6 +478,7 @@ async fn overview(
     headers: HeaderMap,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let (uid, handle) = user_from_auth(&state, &headers)?;
+    let _sqlite = SqliteTimer::start(&state.metrics);
     let db = state.db.lock().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
