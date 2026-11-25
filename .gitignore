@@ -14,3 +14,4 @@ docs-site/tsconfig.tsbuildinfo
 *.tar.gz
 rust/target/
 *.db-journal
+SPECS.md

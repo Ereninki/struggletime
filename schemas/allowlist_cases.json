@@ -1,0 +1,169 @@
+{
+  "valid": [
+    {
+      "name": "production_shaped_bucket",
+      "bucket": {
+        "v": 1,
+        "bucket_id": "bucket-valid",
+        "install_id": "rust-daemon",
+        "project_id": "project-a",
+        "bucket_start_wall": 1700000000,
+        "bucket_secs": 60,
+        "mono_delta_ms": 60000,
+        "counts": {
+          "human_edits": 2,
+          "ai_writes": 1,
+          "active_secs": 30,
+          "idle_secs": 0,
+          "executions": 1,
+          "exec_failures": 0
+        },
+        "git": {
+          "head_commit": "abc123",
+          "lines_added": 4,
+          "lines_deleted": 2,
+          "dirty_files": 1
+        },
+        "files": [
+          {
+            "file_id": "0123456789abcdef",
+            "added": 4,
+            "deleted": 2,
+            "bursts": 1,
+            "op": "modified",
+            "source": "layer1",
+            "editor": "vscode",
+            "language": "rs"
+          }
+        ],
+        "exec_categories": {
+          "test": 1
+        },
+        "editors": {
+          "vscode": 2
+        },
+        "agents": {
+          "claude-code": 1
+        },
+        "languages": {
+          "rs": 2
+        },
+        "os": "windows",
+        "os_detail": {
+          "id": "windows",
+          "release": "10",
+          "arch": "x86_64"
+        },
+        "formula_version": "v0.4.0-alpha",
+        "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unknown_top_level_key",
+      "bucket": {
+        "note": "/tmp/secret.rs"
+      }
+    },
+    {
+      "name": "unknown_count_key",
+      "bucket": {
+        "counts": {
+          "agent_suggestions": 1
+        }
+      }
+    },
+    {
+      "name": "unknown_git_key",
+      "bucket": {
+        "git": {
+          "raw_diff": "secret"
+        }
+      }
+    },
+    {
+      "name": "nested_forbidden_key",
+      "bucket": {
+        "counts": {
+          "human_edits": 1,
+          "meta": {
+            "prompt_text": "secret"
+          }
+        }
+      }
+    },
+    {
+      "name": "raw_file_path",
+      "bucket": {
+        "files": [
+          {
+            "file_id": "0123456789abcdef",
+            "path": "/tmp/secret.rs"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_file_id",
+      "bucket": {
+        "files": [
+          {
+            "file_id": "not-a-salted-id"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_file_operation",
+      "bucket": {
+        "files": [
+          {
+            "op": "renamed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_file_source",
+      "bucket": {
+        "files": [
+          {
+            "source": "unknown"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_editor_label",
+      "bucket": {
+        "editors": {
+          "VS Code": 1
+        }
+      }
+    },
+    {
+      "name": "negative_agent_count",
+      "bucket": {
+        "agents": {
+          "claude-code": -1
+        }
+      }
+    },
+    {
+      "name": "invalid_os_label",
+      "bucket": {
+        "os": "untracked"
+      }
+    },
+    {
+      "name": "unknown_os_detail",
+      "bucket": {
+        "os_detail": {
+          "hostname": "secret"
+        }
+      }
+    }
+  ]
+}

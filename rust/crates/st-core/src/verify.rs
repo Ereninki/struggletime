@@ -355,44 +355,198 @@ pub fn verify_chain(buckets: &[Value]) -> Vec<String> {
     errors
 }
 
-pub fn validate_allowlist(bucket: &Value) -> Vec<String> {
-    use crate::agent_events::FORBIDDEN_KEYS;
+const ALLOWED_TOP: &[&str] = &[
+    "v",
+    "bucket_id",
+    "install_id",
+    "project_id",
+    "repo_remote_hash",
+    "bucket_start_wall",
+    "bucket_secs",
+    "mono_delta_ms",
+    "counts",
+    "git",
+    "files",
+    "exec_categories",
+    "editors",
+    "agents",
+    "languages",
+    "os",
+    "os_detail",
+    "formula_version",
+    "prev_hash",
+    "hash",
+    "signature",
+    "install_pubkey",
+    "sig_alg",
+];
+const ALLOWED_COUNTS: &[&str] = &[
+    "human_edits",
+    "ai_writes",
+    "prompts",
+    "executions",
+    "exec_failures",
+    "commits",
+    "dwell_diff_secs",
+    "idle_secs",
+    "active_secs",
+    "first_event_ts",
+    "last_event_ts",
+    "same_file_reedit_count",
+    "ai_retry_loops",
+    "failed_exec_count",
+    "test_fail_to_pass_transitions",
+    "agent_turn_churn",
+    "human_recovery_edits",
+    "atomic_agent_writes",
+    "git_plumbing_pulses",
+    "reflog_reverts",
+    "build_test_cycles",
+    "cache_fail_to_pass",
+];
+const ALLOWED_GIT: &[&str] = &["head_commit", "lines_added", "lines_deleted", "dirty_files"];
+const ALLOWED_FILE: &[&str] = &[
+    "file_id", "added", "deleted", "bursts", "op", "editor", "agent", "source", "language",
+];
+const ALLOWED_FILE_OP: &[&str] = &["created", "modified", "deleted"];
+const ALLOWED_FILE_SOURCE: &[&str] = &["layer1", "adapter"];
+const ALLOWED_OS_DETAIL: &[&str] = &["id", "release", "arch"];
 
+fn validate_keys(obj: &Map<String, Value>, allowed: &[&str], prefix: &str, errs: &mut Vec<String>) {
+    for key in obj.keys() {
+        if !allowed.contains(&key.as_str()) {
+            errs.push(format!("{prefix}.{key}: not in allowlist"));
+        }
+    }
+}
+
+fn valid_metadata_label(s: &str) -> bool {
+    s.len() <= 32 && !s.contains('/') && !s.contains(' ')
+}
+
+fn validate_file_label(obj: &Map<String, Value>, key: &str, prefix: &str, errs: &mut Vec<String>) {
+    if let Some(value) = obj.get(key) {
+        if !value.as_str().is_some_and(valid_metadata_label) {
+            errs.push(format!("{prefix}.{key}: short metadata label only"));
+        }
+    }
+}
+
+pub fn validate_allowlist(bucket: &Value) -> Vec<String> {
     let mut errs = Vec::new();
     collect_forbidden_paths(bucket, "top", &mut errs);
-    if let Some(files) = bucket.get("files").and_then(|v| v.as_array()) {
+    let Some(top) = bucket.as_object() else {
+        errs.push("top: must be an object".into());
+        return errs;
+    };
+    validate_keys(top, ALLOWED_TOP, "top", &mut errs);
+
+    for (field, allowed) in [("counts", ALLOWED_COUNTS), ("git", ALLOWED_GIT)] {
+        if let Some(value) = bucket.get(field) {
+            if let Some(obj) = value.as_object() {
+                validate_keys(obj, allowed, field, &mut errs);
+            } else {
+                errs.push(format!("{field}: must be an object"));
+            }
+        }
+    }
+
+    if let Some(value) = bucket.get("files") {
+        let Some(files) = value.as_array() else {
+            errs.push("files: must be an array".into());
+            return errs;
+        };
         if files.len() > 50 {
             errs.push("files: max 50 per bucket".into());
         }
         for (i, f) in files.iter().enumerate() {
+            let prefix = format!("files[{i}]");
+            let Some(obj) = f.as_object() else {
+                errs.push(format!("{prefix}: must be an object"));
+                continue;
+            };
+            validate_keys(obj, ALLOWED_FILE, &prefix, &mut errs);
             if let Some(fid) = f.get("file_id").and_then(|x| x.as_str()) {
                 if fid.len() != 16 || !fid.chars().all(|c| c.is_ascii_hexdigit()) {
                     errs.push(format!(
-                        "files[{i}].file_id: must be 16 hex chars (salted id)"
+                        "{prefix}.file_id: must be 16 hex chars (salted id)"
                     ));
                 }
             }
+            if let Some(op) = f.get("op") {
+                if !op.as_str().is_some_and(|s| ALLOWED_FILE_OP.contains(&s)) {
+                    errs.push(format!("{prefix}.op: must be created|modified|deleted"));
+                }
+            }
+            if let Some(source) = f.get("source") {
+                if !source
+                    .as_str()
+                    .is_some_and(|s| ALLOWED_FILE_SOURCE.contains(&s))
+                {
+                    errs.push(format!("{prefix}.source: must be layer1|adapter"));
+                }
+            }
+            for key in ["editor", "agent", "language"] {
+                validate_file_label(obj, key, &prefix, &mut errs);
+            }
             // Absolute / home-looking strings must never appear as values under files.
-            if let Some(obj) = f.as_object() {
-                for (k, v) in obj {
-                    if let Some(s) = v.as_str() {
-                        if (s.starts_with('/') || s.contains(":\\") || s.contains("\\\\"))
-                            && *k != "file_id"
-                            && *k != "op"
-                            && *k != "source"
-                            && *k != "editor"
-                            && *k != "agent"
-                            && *k != "language"
-                        {
-                            errs.push(format!("files[{i}].{k}: looks like an unhashed path"));
-                        }
+            for (k, v) in obj {
+                if let Some(s) = v.as_str() {
+                    if (s.starts_with('/') || s.contains(":\\") || s.contains("\\\\"))
+                        && *k != "file_id"
+                        && *k != "op"
+                        && *k != "source"
+                        && *k != "editor"
+                        && *k != "agent"
+                        && *k != "language"
+                    {
+                        errs.push(format!("{prefix}.{k}: looks like an unhashed path"));
                     }
                 }
             }
         }
     }
-    // Keep the historical FORBIDDEN list name in error text for ops familiarity.
-    let _ = FORBIDDEN_KEYS;
+
+    for field in ["editors", "agents", "languages"] {
+        let Some(value) = bucket.get(field) else {
+            continue;
+        };
+        if value.is_null() {
+            continue;
+        }
+        let Some(obj) = value.as_object() else {
+            errs.push(format!("{field}: must be object of label→count"));
+            continue;
+        };
+        for (label, count) in obj {
+            if !valid_metadata_label(label) {
+                errs.push(format!("{field}.{label}: short metadata label only"));
+            }
+            if count.as_i64().is_none_or(|n| n < 0) {
+                errs.push(format!("{field}.{label}: count must be non-negative int"));
+            }
+        }
+    }
+
+    if let Some(value) = bucket.get("os") {
+        match value.as_str() {
+            Some(os)
+                if !os.is_empty()
+                    && os.len() <= 32
+                    && !os.contains('/')
+                    && !os.contains(' ')
+                    && os != "untracked" => {}
+            Some("untracked") => errs.push("os: must not be untracked".into()),
+            _ => errs.push("os: short platform label only".into()),
+        }
+    }
+    if let Some(value) = bucket.get("os_detail") {
+        if let Some(obj) = value.as_object() {
+            validate_keys(obj, ALLOWED_OS_DETAIL, "os_detail", &mut errs);
+        } else {
+            errs.push("os_detail: must be an object".into());
+        }
+    }
     errs
 }
 
@@ -505,5 +659,30 @@ mod tests {
         });
         let errs = validate_allowlist(&b);
         assert!(errs.iter().any(|e| e.contains("file_id")), "{errs:?}");
+    }
+
+    #[test]
+    fn shared_allowlist_cases_match_python_contract() {
+        let cases: Value =
+            serde_json::from_str(include_str!("../../../../schemas/allowlist_cases.json"))
+                .expect("valid shared allowlist fixtures");
+        for case in cases["valid"].as_array().expect("valid cases") {
+            let name = case["name"].as_str().unwrap_or("unnamed");
+            let errs = validate_allowlist(&case["bucket"]);
+            assert!(errs.is_empty(), "valid case {name}: {errs:?}");
+        }
+        for case in cases["invalid"].as_array().expect("invalid cases") {
+            let name = case["name"].as_str().unwrap_or("unnamed");
+            let errs = validate_allowlist(&case["bucket"]);
+            assert!(!errs.is_empty(), "invalid case accepted: {name}");
+        }
+    }
+
+    #[test]
+    fn allowlist_rejects_invalid_container_types() {
+        let b = json!({"counts": [], "files": {}});
+        let errs = validate_allowlist(&b);
+        assert!(errs.iter().any(|e| e == "counts: must be an object"));
+        assert!(errs.iter().any(|e| e == "files: must be an array"));
     }
 }

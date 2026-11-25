@@ -18,7 +18,6 @@ fn allowlisted_bucket(user_idx: usize, seq: u64) -> Value {
         "counts": {
             "human_edits": 1,
             "active_secs": 30,
-            "agent_suggestions": 0,
             "executions": 0
         },
         "files": [{
@@ -189,6 +188,66 @@ async fn stress_1000_concurrent_users() {
         metrics["buckets_accepted"].as_u64().unwrap_or(0) >= USERS as u64,
         "expected >= {USERS} buckets accepted: {metrics}"
     );
+}
+
+#[tokio::test]
+async fn invalid_bucket_is_rejected_without_db_write() {
+    let dir = std::env::temp_dir().join(format!(
+        "st-allowlist-{}-{}",
+        std::process::id(),
+        Instant::now().elapsed().as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let db = dir.join("allowlist.db");
+    let (addr, handle) = st_server::serve_temp(db.clone()).await.expect("serve_temp");
+    let base = format!("http://{addr}");
+    let client = reqwest::Client::new();
+
+    let key = client
+        .post(format!("{base}/v1/keys"))
+        .json(&json!({"handle": "allowlist-test"}))
+        .send()
+        .await
+        .expect("create key");
+    assert!(key.status().is_success());
+    let key: Value = key.json().await.expect("key json");
+    let token = key["token"].as_str().expect("token");
+
+    let valid = allowlisted_bucket(0, 1);
+    let response = client
+        .post(format!("{base}/v1/buckets/batch"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({ "buckets": [valid] }))
+        .send()
+        .await
+        .expect("valid ingest");
+    assert!(response.status().is_success());
+
+    let mut invalid = allowlisted_bucket(0, 2);
+    invalid["counts"]["agent_suggestions"] = json!(1);
+    let hash = bucket_hash(&invalid);
+    invalid
+        .as_object_mut()
+        .unwrap()
+        .insert("hash".into(), json!(hash));
+    let response = client
+        .post(format!("{base}/v1/buckets/batch"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({ "buckets": [invalid] }))
+        .send()
+        .await
+        .expect("invalid ingest");
+    assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+
+    let conn = rusqlite::Connection::open(&db).expect("open verification db");
+    let stored: i64 = conn
+        .query_row("SELECT COUNT(*) FROM buckets", [], |row| row.get(0))
+        .expect("count stored buckets");
+    assert_eq!(stored, 1, "invalid bucket must not be persisted");
+    drop(conn);
+
+    handle.abort();
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn read_rss_kb() -> Option<u64> {
