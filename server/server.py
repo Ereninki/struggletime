@@ -927,6 +927,43 @@ def profile_payload(c, handle, session=None):
             **daemon_link_status(c, handle),
             **stats_for(c, user=handle)}
 
+
+def public_project_payload(row):
+    """Public project metadata; never expose owner-only local/sync details."""
+    return {
+        "id": row["id"],
+        "owner": row["owner"],
+        "name": row["name"],
+        "repo_url": row["repo_url"],
+        "repo_slug": repo_slug(row["repo_url"]),
+        "head_from": row["head_from"],
+        "head_to": row["head_to"],
+        "archived": bool(_urow(row, "archived", 0)),
+        "deleted": bool(_urow(row, "deleted", 0)),
+    }
+
+
+def public_profile_payload(c, handle):
+    """Explicit public allowlist; private settings remain in profile_payload."""
+    u = c.execute("SELECT * FROM user WHERE handle=?", (handle,)).fetchone()
+    if not u:
+        return None
+    link = link_row(c, handle)
+    projects = c.execute("SELECT * FROM project WHERE owner=?", (handle,)).fetchall()
+    return {
+        "handle": handle,
+        "is_public": bool(u["is_public"]),
+        "display_name": _urow(u, "display_name")
+        or (link["slack_name"] if link and "slack_name" in link.keys() else None),
+        "github_login": link["github_login"] if link else None,
+        "github_linked": bool(link and link["github_login"]),
+        "slack_avatar": (link["slack_avatar"] if link and "slack_avatar" in link.keys() else None),
+        "slack_name": (link["slack_name"] if link and "slack_name" in link.keys() else None),
+        "projects": [public_project_payload(row) for row in projects],
+        **stats_for(c, user=handle),
+    }
+
+
 # Metadata budget is ~25–50 KB/hour. Oversized POSTs (multi‑MB ledger dumps) have
 # OOM-killed the process and taken down every dashboard fetch behind Caddy.
 MAX_BODY_BYTES = int(os.environ.get("STRUGGLETIME_MAX_BODY", str(512 * 1024)))
@@ -1368,10 +1405,7 @@ class H(BaseHTTPRequestHandler):
             if not u: return self.send_json(404, {"error": "user not found"})
             if not u["is_public"] and self.auth_handle(c) != p[2]:
                 return self.send_json(403, {"error": "profile is private"})
-            projs = [dict(r) for r in c.execute("SELECT * FROM project WHERE owner=?", (p[2],))]
-            payload = profile_payload(c, p[2])
-            payload["projects"] = projs
-            return self.send_json(200, payload)
+            return self.send_json(200, public_profile_payload(c, p[2]))
         if p == ["v1", "projects"]:
             who = self.auth_handle(c)
             if not who:
