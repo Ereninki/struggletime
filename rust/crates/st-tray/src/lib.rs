@@ -204,8 +204,12 @@ fn process_alive(pid: u32) -> bool {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
         Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
             .unwrap_or(false)

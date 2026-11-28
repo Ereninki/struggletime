@@ -358,8 +358,12 @@ fn stop_daemon() -> Result<()> {
         }
         #[cfg(windows)]
         {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
             let _ = Command::new("taskkill")
                 .args(["/PID", &pid.to_string(), "/F"])
+                .creation_flags(CREATE_NO_WINDOW)
                 .status();
         }
         let _ = fs::remove_file(daemon_pid_path());
@@ -416,8 +420,12 @@ fn daemon_alive() -> bool {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
         Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}")])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
             .unwrap_or(false)
